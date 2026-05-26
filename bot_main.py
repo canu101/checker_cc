@@ -175,7 +175,7 @@ def kb_admin(uid):
         [_btn("🔌 البروكسيات",     callback_data="admin_proxies"),
          _btn("📋 السجلات",        callback_data="admin_logs")],
         [_btn("⚙️ الإعدادات",      callback_data="admin_settings"),
-         _btn("🌐 لوحة الويب",     url=f"https://{os.environ.get('REPLIT_DEV_DOMAIN','localhost')}:5000")],
+         _btn("🌐 لوحة الويب",     url=f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN','checker-cc-bot.railway.app')}")],
         [_btn("🔙 رجوع", callback_data="main_menu")],
     ])
 
