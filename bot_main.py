@@ -1308,7 +1308,7 @@ def main():
         print("❌ BOT_TOKEN غير موجود!")
         return
 
-    bot = Bot(token=BOT_TOKEN, parse_mode="Markdown")
+    bot = Bot(token=BOT_TOKEN)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
     dp.startup.register(on_startup)
