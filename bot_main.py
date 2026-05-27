@@ -319,7 +319,7 @@ def kb_admin(uid: int) -> InlineKeyboardMarkup:
         [_btn("🔌 البروكسيات",     callback_data="admin_proxies", style="primary"),
          _btn("📋 السجلات",        callback_data="admin_logs", style="primary")],
         [_btn("⚙️ الإعدادات",      callback_data="admin_settings", style="primary"),
-         _btn("🌐 لوحة الويب",     url=f"https://{os.environ.get('REPLIT_DEV_DOMAIN','localhost')}:5000")],
+         _btn("🌐 لوحة الويب",     url=f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN','checker-cc-bot.railway.app')}")],
         [_btn("🔙 رجوع", callback_data="main_menu", style="danger")],
     ])
 
@@ -776,8 +776,12 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         return
 
     if data in ("set_lang_ar", "set_lang_en"):
-        db.set_user_language(uid, data.split("_")[-1])
-        await edit(s(uid, "lang_changed"), kb_main(uid, is_sub, is_adm))
+        lang = data.split("_")[-1]
+        db.set_user_language(uid, lang)
+        # استخدم اللغة الجديدة مباشرة
+        st = STRINGS.get(lang, STRINGS["ar"])
+        msg = st.get("lang_changed", STRINGS["ar"].get("lang_changed", "تم تغيير اللغة"))
+        await edit(msg, kb_main(uid, is_sub, is_adm))
         return
 
     # ── Gateway select (single) ────────────
