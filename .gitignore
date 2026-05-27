@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+bot_system.db
+.env
+.env.local
+bot_main_ptb.py.bak
