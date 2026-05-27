@@ -318,7 +318,7 @@ def kb_admin(uid: int) -> InlineKeyboardMarkup:
         [_btn("🔌 البروكسيات",     callback_data="admin_proxies", style="primary"),
          _btn("📋 السجلات",        callback_data="admin_logs", style="primary")],
         [_btn("⚙️ الإعدادات",      callback_data="admin_settings", style="primary"),
-         _btn("🌐 لوحة الويب",     url=f"https://{os.environ.get('REPLIT_DEV_DOMAIN','localhost')}:5000")],
+         _btn("🌐 لوحة الويب",     url=f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN','checker-cc-bot.railway.app')}")],
         [_btn("🔙 رجوع", callback_data="main_menu", style="danger")],
     ])
 
