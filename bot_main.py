@@ -775,9 +775,14 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         return
 
     if data in ("set_lang_ar", "set_lang_en"):
-        db.set_user_language(uid, data.split("_")[-1])
-        await edit(s(uid, "lang_changed"), kb_main(uid, is_sub, is_adm))
+        lang = data.split("_")[-1]
+        db.set_user_language(uid, lang)
+        # استخدم اللغة الجديدة مباشرة
+        st = STRINGS.get(lang, STRINGS["ar"])
+        msg = st.get("lang_changed", STRINGS["ar"].get("lang_changed", "تم تغيير اللغة"))
+        await edit(msg, kb_main(uid, is_sub, is_adm))
         return
+
 
     # ── Gateway select (single) ────────────
     if data.startswith("gw|"):
