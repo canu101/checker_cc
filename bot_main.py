@@ -726,7 +726,9 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
     if data == "main_menu":
         await state.update_data(is_checking=False, bulk_cancel=True, gw_step=None,
                                 admin_code_step=None, awaiting_proxy=False,
-                                awaiting_proxy_file=False)
+                                awaiting_proxy_file=False, awaiting_card=False,
+                                awaiting_redeem=False, awaiting_admin_pass=False,
+                                awaiting_setting_value=False, is_admin_verified=False)
         user = db.get_user(uid)
         name = user.get('first_name', 'User') if user else 'User'
         await edit(s(uid, "menu_title", name=name), kb_main(uid, is_sub, is_adm))
@@ -776,8 +778,16 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         return
 
     if data in ("set_lang_ar", "set_lang_en"):
-        db.set_user_language(uid, data.split("_")[-1])
-        await edit(s(uid, "lang_changed"), kb_main(uid, is_sub, is_adm))
+        new_lang = data.split("_")[-1]
+        db.set_user_language(uid, new_lang)
+        await state.update_data(is_checking=False, bulk_cancel=True, gw_step=None,
+                                admin_code_step=None, awaiting_proxy=False,
+                                awaiting_proxy_file=False, awaiting_card=False,
+                                awaiting_redeem=False, awaiting_admin_pass=False,
+                                awaiting_setting_value=False, is_admin_verified=False)
+        user = db.get_user(uid)
+        name = user.get('first_name', 'User') if user else 'User'
+        await edit(s(uid, "menu_title", name=name), kb_main(uid, is_sub, is_adm))
         return
 
     # ── Gateway select (single) ────────────
