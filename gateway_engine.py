@@ -36,47 +36,88 @@ class GatewayEngine:
             'raw': raw_text[:2000]
         }
 
+        # First check gateway-specific patterns if available
         if gw:
             success_pat = gw.get('success_pattern', '').strip()
             decline_pat = gw.get('decline_pattern', '').strip()
             error_pat = gw.get('error_pattern', '').strip()
 
             if success_pat and re.search(success_pat, raw_text, re.IGNORECASE):
-                result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Success'})
+                result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Success - Pattern Match'})
                 return result
             if decline_pat and re.search(decline_pat, raw_text, re.IGNORECASE):
-                result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': 'Declined'})
+                result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': 'Declined - Pattern Match'})
                 return result
             if error_pat and re.search(error_pat, raw_text, re.IGNORECASE):
-                result.update({'category': 'error', 'status_text': 'ERROR', 'reason': 'Error'})
+                result.update({'category': 'error', 'status_text': 'ERROR', 'reason': 'Error - Pattern Match'})
                 return result
 
+        # Try JSON parsing for structured responses
         try:
             data = json.loads(raw_text)
+            
+            # Check for error field (common in Stripe-like APIs)
             if 'error' in data:
                 err = data['error']
                 code = err.get('decline_code', '')
+                msg = err.get('message', 'Declined')
                 if code == 'insufficient_funds':
-                    result.update({'category': 'approved_insufficient', 'status_text': 'APPROVED', 'reason': 'Insufficient Funds'})
+                    result.update({'category': 'approved_insufficient', 'status_text': 'APPROVED', 'reason': f'Insufficient Funds - {msg}'})
+                elif code in ['card_declined', 'incorrect_cvc', 'expired_card']:
+                    result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': msg})
                 else:
-                    result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': err.get('message', 'Declined')})
-            elif data.get('status') == 'succeeded':
+                    result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': msg})
+                return result
+            
+            # Check for success indicators
+            if data.get('status') == 'succeeded':
                 amt = data.get('amount', 0)
                 curr = data.get('currency', 'usd').upper()
                 result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Payment Successful', 'amount': f"{amt/100:.2f} {curr}"})
-            elif data.get('status') == 'requires_action':
+                return result
+            
+            if data.get('status') == 'requires_action':
                 result.update({'category': 'auth_required', 'status_text': 'APPROVED', 'reason': '3D Secure / OTP Required', 'requires_3ds': True})
-            elif data.get('status') == 'requires_capture':
+                return result
+            
+            if data.get('status') == 'requires_capture':
                 result.update({'category': 'approved_auth_only', 'status_text': 'APPROVED', 'reason': 'Authorized (Not Captured)'})
-        except Exception:
-            text_lower = raw_text.lower()
-            if re.search(r'(approved|success|succeeded)', text_lower):
-                if 'insufficient' in text_lower or 'funds' in text_lower:
-                    result.update({'category': 'approved_insufficient', 'status_text': 'APPROVED', 'reason': 'Insufficient Funds'})
-                else:
-                    result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Success'})
-            elif re.search(r'(declined|rejected|error|fail)', text_lower):
-                result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': 'Declined'})
+                return result
+
+            # Check for other common success fields
+            if data.get('success') == True or data.get('approved') == True:
+                result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Success'})
+                return result
+            
+            if data.get('response') == 'approved':
+                result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Approved'})
+                return result
+                
+        except json.JSONDecodeError:
+            pass  # Not JSON, continue to text analysis
+        except Exception as e:
+            logger.warning(f"JSON parse error: {e}")
+
+        # Fallback: text-based analysis
+        text_lower = raw_text.lower()
+        
+        # Check for approval keywords
+        if re.search(r'\b(approved|success|succeeded|authorized)\b', text_lower):
+            if 'insufficient' in text_lower or 'funds' in text_lower:
+                result.update({'category': 'approved_insufficient', 'status_text': 'APPROVED', 'reason': 'Insufficient Funds'})
+            else:
+                result.update({'category': 'approved_charged', 'status_text': 'APPROVED', 'reason': 'Success'})
+            return result
+        
+        # Check for decline keywords
+        if re.search(r'\b(declined|rejected|failure|failed)\b', text_lower):
+            result.update({'category': 'declined', 'status_text': 'DECLINED', 'reason': 'Declined'})
+            return result
+        
+        # Check for error keywords
+        if re.search(r'\b(error|invalid|unauthorized)\b', text_lower):
+            result.update({'category': 'error', 'status_text': 'ERROR', 'reason': 'Error in response'})
+            return result
 
         return result
 
@@ -109,13 +150,18 @@ class GatewayEngine:
             if method == 'GET':
                 resp = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, proxies=proxy, timeout=timeout))
             else:
-                if 'json' in headers.get('Content-Type', '').lower():
+                # Check Content-Type header to decide how to send body
+                content_type = headers.get('Content-Type', '').lower()
+                if 'application/json' in content_type:
+                    # Try to parse body as JSON and send with json= parameter
                     try:
                         json_body = json.loads(body)
                         resp = await loop.run_in_executor(None, lambda: requests.post(url, json=json_body, headers=headers, proxies=proxy, timeout=timeout))
-                    except Exception:
+                    except json.JSONDecodeError:
+                        # Invalid JSON in body, send as raw data
                         resp = await loop.run_in_executor(None, lambda: requests.post(url, data=body, headers=headers, proxies=proxy, timeout=timeout))
                 else:
+                    # Send as form/data
                     resp = await loop.run_in_executor(None, lambda: requests.post(url, data=body, headers=headers, proxies=proxy, timeout=timeout))
 
             elapsed = round(time.time() - start, 2)
