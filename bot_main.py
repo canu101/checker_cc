@@ -264,7 +264,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        kb_back(uid, "admin_proxies"), fid)
         return
 
-    # Card file upload
+    # Card file upload - send banner once with initial message
     if not is_allowed(uid):
         await update.message.reply_text(s(uid, "no_sub"))
         return
@@ -300,6 +300,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}")] for gw in gateways]
     rows.append([_btn(s(uid,"btn_cancel"), callback_data="main_menu")])
     fid = await get_banner(context.bot)
+    # Send banner ONCE here with the gateway selection message
     await bot_send(context.bot, uid,
                    f"📂 *ملف الكروت*\n\n✅ صالحة: `{len(cards)}`\n\n🌐 اختر البوابة:",
                    InlineKeyboardMarkup(rows), fid)
@@ -540,9 +541,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Main menu ──────────────────────────
     if data == "main_menu":
-        context.user_data.update({'is_checking': False, 'bulk_cancel': True, 'gw_step': None,
-                                   'admin_code_step': None, 'awaiting_proxy': False,
-                                   'awaiting_proxy_file': False})
+        context.user_data.update({
+            'is_checking': False, 
+            'bulk_cancel': True, 
+            'gw_step': None,
+            'admin_code_step': None, 
+            'awaiting_proxy': False,
+            'awaiting_proxy_file': False,
+            'awaiting_card': False,
+            'awaiting_redeem': False,
+            'awaiting_admin_pass': False,
+            'awaiting_setting_value': None,
+            'is_admin_verified': False,
+            'last_card': None,
+            'bulk_cards': None,
+            'bulk_gw': None,
+        })
         user = db.get_user(uid)
         name = user.get('first_name','User') if user else 'User'
         await edit(s(uid,"menu_title",name=name), kb_main(uid, is_sub, is_adm))
@@ -584,16 +598,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "menu_settings":
+        lang = get_lang(uid)
+        lang_label_ar = "🇸🇦  العربية ✅" if lang == "ar" else "🇸🇦  العربية"
+        lang_label_en = "🇬🇧  English ✅" if lang == "en" else "🇬🇧  English"
         await edit(s(uid,"settings_title"), InlineKeyboardMarkup([
-            [_btn("🇸🇦  العربية", callback_data="set_lang_ar"),
-             _btn("🇬🇧  English",  callback_data="set_lang_en")],
+            [InlineKeyboardButton(lang_label_ar, callback_data="set_lang_ar"),
+             InlineKeyboardButton(lang_label_en, callback_data="set_lang_en")],
             [_btn(s(uid,"btn_back"), callback_data="main_menu")],
         ]))
         return
 
     if data in ("set_lang_ar","set_lang_en"):
-        db.set_user_language(uid, data.split("_")[-1])
-        await edit(s(uid,"lang_changed"), kb_main(uid, is_sub, is_adm))
+        new_lang = data.split("_")[-1]
+        db.set_user_language(uid, new_lang)
+        # Refresh is_sub and is_adm after language change
+        is_sub = db.is_subscribed(uid)
+        is_adm = is_admin(uid)
+        # Show main menu with new language
+        user = db.get_user(uid)
+        name = user.get('first_name','User') if user else 'User'
+        await edit(s(uid,"menu_title",name=name), kb_main(uid, is_sub, is_adm))
         return
 
     # ── Gateway select (single) ────────────
@@ -936,6 +960,7 @@ async def _show_users(edit_fn, uid, page=0):
 # ─────────────────────────────────────────
 
 async def _run_single(update, context, gw_id, card, fid=None):
+    """Single card check - uses banner"""
     query = update.callback_query
     uid   = update.effective_user.id
 
@@ -982,11 +1007,20 @@ async def _run_single(update, context, gw_id, card, fid=None):
         ]), fid)
 
 
+async def _send_result_no_banner(bot, uid, msg):
+    """Send result message without banner (for bulk checks to save resources)"""
+    try:
+        await bot.send_message(chat_id=uid, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Send no banner: {e}")
+
+
 # ─────────────────────────────────────────
 #  Bulk check
 # ─────────────────────────────────────────
 
 async def _run_bulk(update, context, fid=None):
+    """Bulk card check - banner sent once at start, results without banner"""
     query  = update.callback_query
     uid    = update.effective_user.id
     cards  = context.user_data.get('bulk_cards', [])
@@ -1003,6 +1037,7 @@ async def _run_bulk(update, context, fid=None):
     approved_list, errors, checked = [], 0, 0
 
     stop_kb = InlineKeyboardMarkup([[_btn(s(uid,"stop_btn"), callback_data="bulk_cancel")]])
+    # Edit the existing banner message to show progress (no new banner)
     await bot_edit(query, f"⚡ *بدء الفحص...*\n\n`{progress_bar(0,total)}`\n📊 `0/{total}`  ✅`0`  ⚠️`0`",
                    stop_kb, fid)
     prog_msg    = query.message
@@ -1028,8 +1063,9 @@ async def _run_bulk(update, context, fid=None):
                 f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n🔖 {BOT_SIGNATURE}"
             )
             try:
-                await bot_send(context.bot, uid, msg, InlineKeyboardMarkup([]), fid)
-                await log_channel(context.bot, msg, fid)
+                # Send without banner to save resources during bulk checks
+                await _send_result_no_banner(context.bot, uid, msg)
+                await log_channel(context.bot, msg, None)  # No banner for log channel either
             except Exception as e:
                 logger.error(f"Bulk send: {e}")
         elif result.get('category') == 'error' or not result.get('success'):
