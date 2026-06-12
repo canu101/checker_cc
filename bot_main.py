@@ -8,7 +8,7 @@ import threading
 import os
 from datetime import datetime
 from typing import Optional
-
+from pydantic import ConfigDict
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import (
@@ -18,7 +18,7 @@ from aiogram.types import (
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
 from database import DatabaseManager
 from gateway_engine import GatewayEngine
@@ -172,6 +172,32 @@ router = Router()
 
 
 # ══════════════════════════════════════════════════════
+#  StyledButton — زر ملون (style field)
+# ══════════════════════════════════════════════════════
+
+class StyledButton(InlineKeyboardButton):
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
+    style: Optional[str] = None  # primary, success, danger, secondary
+
+
+def _btn(text: str, *,
+         callback_data: Optional[str] = None,
+         url: Optional[str] = None,
+         style: Optional[str] = None,
+         **kw) -> StyledButton:
+    """إنشاء زر ملون"""
+    kwargs: dict = {'text': text}
+    if callback_data is not None:
+        kwargs['callback_data'] = callback_data
+    if url is not None:
+        kwargs['url'] = url
+    if style is not None:
+        kwargs['style'] = style
+    kwargs.update(kw)
+    return StyledButton(**kwargs)
+
+
+# ══════════════════════════════════════════════════════
 #  HELPERS
 # ══════════════════════════════════════════════════════
 
@@ -310,54 +336,44 @@ async def log_channel(bot: Bot, text: str, fid=None):
 
 
 # ══════════════════════════════════════════════════════
-#  KEYBOARDS (تقبل style كمعامل اختياري ولا ترسله)
+#  KEYBOARDS
 # ══════════════════════════════════════════════════════
-
-def _btn(text: str, callback_data: Optional[str] = None, url: Optional[str] = None, **kwargs):
-    """
-    ينشئ زر InlineKeyboardButton.
-    يمكن إضافة style='primary' إلخ للشكل فقط في الكود، لكنه لا يُرسل لتليجرام حالياً.
-    """
-    if url:
-        return InlineKeyboardButton(text=text, url=url)
-    return InlineKeyboardButton(text=text, callback_data=callback_data)
-
 
 def kb_main(uid: int, is_sub: bool, is_adm: bool) -> InlineKeyboardMarkup:
     if is_sub or is_adm:
         return InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("📂 رفع كروت", callback_data="menu_upload"),
-             _btn("💳 فحص كارت", callback_data="menu_check")],
-            [_btn("👤 حسابي", callback_data="menu_account"),
-             _btn("📊 السجل", callback_data="menu_history")],
-            [_btn("🎫 كود تفعيل", callback_data="menu_redeem")],
-            [_btn("⚙️ الإعدادات", callback_data="menu_settings"),
+            [_btn("📂 رفع كروت", callback_data="menu_upload", style="primary"),
+             _btn("💳 فحص كارت", callback_data="menu_check", style="success")],
+            [_btn("👤 حسابي", callback_data="menu_account", style="primary"),
+             _btn("📊 السجل", callback_data="menu_history", style="primary")],
+            [_btn("🎫 كود تفعيل", callback_data="menu_redeem", style="success")],
+            [_btn("⚙️ الإعدادات", callback_data="menu_settings", style="primary"),
              _btn("📞 الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
         ])
     return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("💎 اشتراك", url=f"https://t.me/{SUPPORT_USERNAME}")],
-        [_btn("🎫 كود تفعيل", callback_data="menu_redeem")],
+        [_btn("💎 اشتراك", url=f"https://t.me/{SUPPORT_USERNAME}", style="success")],
+        [_btn("🎫 كود تفعيل", callback_data="menu_redeem", style="primary")],
         [_btn("📞 الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
     ])
 
 
 def kb_admin(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("📊 الإحصائيات", callback_data="admin_stats"),
-         _btn("👥 المستخدمين", callback_data="admin_users")],
-        [_btn("🎫 أكواد التفعيل", callback_data="admin_codes"),
-         _btn("⚡ البوابات", callback_data="admin_gateways")],
-        [_btn("🔌 البروكسيات", callback_data="admin_proxies"),
-         _btn("📋 السجلات", callback_data="admin_logs")],
-        [_btn("⚙️ الإعدادات", callback_data="admin_settings"),
+        [_btn("📊 الإحصائيات", callback_data="admin_stats", style="primary"),
+         _btn("👥 المستخدمين", callback_data="admin_users", style="primary")],
+        [_btn("🎫 أكواد التفعيل", callback_data="admin_codes", style="success"),
+         _btn("⚡ البوابات", callback_data="admin_gateways", style="primary")],
+        [_btn("🔌 البروكسيات", callback_data="admin_proxies", style="primary"),
+         _btn("📋 السجلات", callback_data="admin_logs", style="primary")],
+        [_btn("⚙️ الإعدادات", callback_data="admin_settings", style="primary"),
          _btn("🌐 لوحة الويب", url=f"https://{os.environ.get('REPLIT_DEV_DOMAIN','localhost')}:5000")],
-        [_btn("🔙 رجوع", callback_data="main_menu")],
+        [_btn("🔙 رجوع", callback_data="main_menu", style="danger")],
     ])
 
 
 def kb_back(uid: int, target="main_menu") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(s(uid, "btn_back"), callback_data=target)]
+        [_btn(s(uid, "btn_back"), callback_data=target, style="danger")]
     ])
 
 
@@ -415,7 +431,7 @@ async def cmd_addgateway(message: Message, state: FSMContext):
     await state.update_data(gw_step='name', gw_data={})
     fid = await get_banner(message.bot)
     cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("❌ إلغاء", callback_data="main_menu")]
+        [_btn("❌ إلغاء", callback_data="main_menu", style="danger")]
     ])
     await bot_send(message.bot, uid,
                    "⚡ *إضافة بوابة جديدة*\nالخطوة 1/7\n\n📌 أرسل *اسم البوابة* (داخلي):",
@@ -484,8 +500,8 @@ async def on_document(message: Message, state: FSMContext):
         await message.answer(s(uid, "no_gateways"))
         return
 
-    rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}")] for gw in gateways]
-    rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu")])
+    rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}", style="primary")] for gw in gateways]
+    rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")])
     fid = await get_banner(message.bot)
     await bot_send(message.bot, uid,
                    f"📂 *ملف الكروت*\n\n✅ صالحة: `{len(cards)}`\n\n🌐 اختر البوابة:",
@@ -590,8 +606,8 @@ async def on_message(message: Message, state: FSMContext):
         if not gateways:
             await message.answer(s(uid, "no_gateways"))
             return
-        rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"gw|{gw['id']}")] for gw in gateways]
-        rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu")])
+        rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"gw|{gw['id']}", style="primary")] for gw in gateways]
+        rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")])
         fid = await get_banner(message.bot)
         await bot_send(message.bot, uid,
                        f"💳 `····{card['number'][-4:]}`\n\n🌐 اختر البوابة:",
@@ -611,7 +627,7 @@ async def on_message(message: Message, state: FSMContext):
         db.set_setting(setting_key, text)
         fid = await get_banner(message.bot)
         await bot_send(message.bot, uid,
-                       f"✅ *تم تحديث الإعداد*\n\n📌 `{setting_key}`\n🆔 `{text}`",
+                       f"✅ *تم تحديث الإعداد*\n\n📌 `{setting_key}`\n🆕 `{text}`",
                        kb_admin(uid), fid)
         return
 
@@ -632,7 +648,7 @@ async def _handle_code_wizard(message: Message, state: FSMContext, text: str, st
     uid = message.from_user.id
     fid = await get_banner(message.bot)
     cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("❌ إلغاء", callback_data="admin_codes")]
+        [_btn("❌ إلغاء", callback_data="admin_codes", style="danger")]
     ])
 
     if step == 'hours':
@@ -696,7 +712,7 @@ async def _handle_gw_wizard(message: Message, state: FSMContext, text: str, step
     gd = data.setdefault('gw_data', {})
     fid = await get_banner(message.bot)
     cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("❌ إلغاء", callback_data="main_menu")]
+        [_btn("❌ إلغاء", callback_data="main_menu", style="danger")]
     ])
 
     if step == 'patterns':
@@ -803,9 +819,9 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
 
     if data == "menu_settings":
         await edit(s(uid, "settings_title"), InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("🇸🇦  العربية", callback_data="set_lang_ar"),
-             _btn("🇬🇧  English",  callback_data="set_lang_en")],
-            [_btn(s(uid, "btn_back"), callback_data="main_menu")],
+            [_btn("🇸🇦  العربية", callback_data="set_lang_ar", style="primary"),
+             _btn("🇬🇧  English",  callback_data="set_lang_en", style="primary")],
+            [_btn(s(uid, "btn_back"), callback_data="main_menu", style="danger")],
         ]))
         return
 
@@ -840,17 +856,17 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         await edit(
             f"⚡ *البوابة:* `{gw['display_name']}`\n💳 الكروت: `{total}`\n\nاضغط تأكيد للبدء:",
             InlineKeyboardMarkup(inline_keyboard=[
-                [_btn(s(uid, "confirm_btn"), callback_data="bulk_confirm")],
-                [_btn(s(uid, "change_gw_btn"), callback_data="bulk_back"),
-                 _btn(s(uid, "btn_cancel"), callback_data="main_menu")],
+                [_btn(s(uid, "confirm_btn"), callback_data="bulk_confirm", style="success")],
+                [_btn(s(uid, "change_gw_btn"), callback_data="bulk_back", style="primary"),
+                 _btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")],
             ])
         )
         return
 
     if data == "bulk_back":
         gateways = get_all_gateways()
-        rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}")] for gw in gateways]
-        rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu")])
+        rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}", style="primary")] for gw in gateways]
+        rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")])
         await edit(f"🌐 اختر البوابة ({data_state.get('bulk_total', 0)} كارت):",
                    InlineKeyboardMarkup(inline_keyboard=rows))
         return
@@ -902,13 +918,13 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
             return
         blk = u['is_blocked']
         kb_ = InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("➕ +24 ساعة", callback_data=f"admin_ext|{tid}|24"),
-             _btn("➕ +7 أيام",  callback_data=f"admin_ext|{tid}|168")],
-            [_btn("➕ +30 يوم",  callback_data=f"admin_ext|{tid}|720"),
-             _btn("✏️ مخصص",    callback_data=f"admin_ext_custom|{tid}")],
+            [_btn("➕ +24 ساعة", callback_data=f"admin_ext|{tid}|24", style="success"),
+             _btn("➕ +7 أيام",  callback_data=f"admin_ext|{tid}|168", style="success")],
+            [_btn("➕ +30 يوم",  callback_data=f"admin_ext|{tid}|720", style="success"),
+             _btn("✏️ مخصص",    callback_data=f"admin_ext_custom|{tid}", style="primary")],
             [_btn("🚫 حظر" if not blk else "✅ رفع الحظر",
-                  callback_data=f"admin_blk|{tid}|{1-blk}")],
-            [_btn("🔙 رجوع", callback_data="admin_users")],
+                  callback_data=f"admin_blk|{tid}|{1-blk}", style="danger" if not blk else "success")],
+            [_btn("🔙 رجوع", callback_data="admin_users", style="danger")],
         ])
         st = "🔴 محظور" if blk else ("✅ نشط" if u.get('subscription_expiry') else "⚫ بلا اشتراك")
         await edit(
@@ -945,7 +961,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         await edit(
             "🎫 *إنشاء كود تفعيل*\n\nالخطوة 1/2\n⏰ كم ساعة مدة الكود؟\n\n`24` = يوم\n`168` = أسبوع\n`720` = شهر",
             InlineKeyboardMarkup(inline_keyboard=[
-                [_btn("❌ إلغاء", callback_data="admin_codes")]
+                [_btn("❌ إلغاء", callback_data="admin_codes", style="danger")]
             ])
         )
         return
@@ -1036,20 +1052,20 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
 
 async def _show_codes(edit_fn, uid: int):
     codes = db.get_all_codes()
-    rows = [[_btn("➕  إنشاء كود جديد", callback_data="admin_gencode")]]
+    rows = [[_btn("➕  إنشاء كود جديد", callback_data="admin_gencode", style="success")]]
     for c in codes:
         hrs = c.get('duration_hours') or c.get('duration_days', 1) * 24
         used = f"{c['used_count']}/{c['max_uses']}"
         lbl = c.get('label') or c['code']
         tag = f"{hrs}h" if hrs < 24 else f"{hrs//24}d"
         rows.append([_btn(f"🎫 {lbl} | ⏰{tag} | [{used}]", callback_data=f"admin_delcode|{c['id']}")])
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel")])
+    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
     await edit_fn("🎫 *أكواد التفعيل:*\n_(اضغط على كود لحذفه)_", InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 async def _show_gateways(edit_fn, uid: int):
     gateways = get_all_gateways()
-    rows = [[_btn("➕  إضافة بوابة", callback_data="admin_gw_hint")]]
+    rows = [[_btn("➕  إضافة بوابة", callback_data="admin_gw_hint", style="success")]]
     for gw in gateways:
         if gw.get('id', 0) < 0:
             # Built-in gateway — read only
@@ -1058,7 +1074,7 @@ async def _show_gateways(edit_fn, uid: int):
         else:
             rows.append([_btn(f"⚡ {gw['button_name']} — {gw['display_name']}",
                               callback_data=f"admin_delgw|{gw['id']}")])
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel")])
+    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
     await edit_fn(
         "⚡ *البوابات النشطة:*\n_(اضغط للحذف — 🔒 مدمجة من الكود)_\n\nلإضافة بوابة: /addgateway",
         InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1069,16 +1085,16 @@ async def _show_proxies(edit_fn, uid: int):
     proxies = db.get_active_proxies()
     count = len(proxies)
     rows = [
-        [_btn("➕  بروكسي واحد",    callback_data="admin_proxy_add"),
-         _btn("📁  رفع ملف (.txt)", callback_data="admin_proxy_file")],
+        [_btn("➕  بروكسي واحد",    callback_data="admin_proxy_add", style="success"),
+         _btn("📁  رفع ملف (.txt)", callback_data="admin_proxy_file", style="primary")],
     ]
     for p in proxies[:10]:
         label = f"{'✅' if p['fail_count'] < 3 else '⚠️'} {p['proxy_string'][:35]}"
         rows.append([_btn(label, callback_data=f"admin_delproxy|{p['id']}")])
     if count > 10:
-        rows.append([_btn(f"… و{count-10} أخرى (من لوحة الويب)", callback_data="admin_proxies")])
-    rows.append([_btn("🗑  حذف الكل", callback_data="admin_proxy_clear"),
-                 _btn("🔙 رجوع",       callback_data="admin_panel")])
+        rows.append([_btn(f"… و{count-10} أخرى (من لوحة الويب)", callback_data="admin_proxies", style="primary")])
+    rows.append([_btn("🗑  حذف الكل", callback_data="admin_proxy_clear", style="danger"),
+                 _btn("🔙 رجوع",       callback_data="admin_panel", style="danger")])
     await edit_fn(
         f"🔌 *البروكسيات*\n\n✅ نشط: `{count}`\n_(اضغط للحذف)_",
         InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1104,12 +1120,12 @@ async def _show_logs(edit_fn, uid: int, page=0):
     if total_pages > 1:
         nav_row = []
         if page > 0:
-            nav_row.append(_btn("◀️", callback_data=f"admin_logs_page|{page-1}"))
-        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_logs"))
+            nav_row.append(_btn("◀️", callback_data=f"admin_logs_page|{page-1}", style="primary"))
+        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_logs", style="primary"))
         if page < total_pages - 1:
-            nav_row.append(_btn("▶️", callback_data=f"admin_logs_page|{page+1}"))
+            nav_row.append(_btn("▶️", callback_data=f"admin_logs_page|{page+1}", style="primary"))
         rows.append(nav_row)
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel")])
+    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
     await edit_fn(msg, InlineKeyboardMarkup(inline_keyboard=rows))
 
 
@@ -1135,9 +1151,9 @@ async def _show_settings(edit_fn, uid: int):
         if key == 'bot_token' and value:
             value = '***'
         msg += f"📌 `{key}`: `{value}`\n"
-        rows.append([_btn(f"✏️ تعديل {key}", callback_data=f"admin_set_setting|{key}")])
+        rows.append([_btn(f"✏️ تعديل {key}", callback_data=f"admin_set_setting|{key}", style="primary")])
 
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel")])
+    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
     await edit_fn(msg, InlineKeyboardMarkup(inline_keyboard=rows))
 
 
@@ -1159,12 +1175,12 @@ async def _show_users(edit_fn, uid: int, page=0):
     if total_pages > 1:
         nav_row = []
         if page > 0:
-            nav_row.append(_btn("◀️", callback_data=f"admin_users_page|{page-1}"))
-        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_users"))
+            nav_row.append(_btn("◀️", callback_data=f"admin_users_page|{page-1}", style="primary"))
+        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_users", style="primary"))
         if page < total_pages - 1:
-            nav_row.append(_btn("▶️", callback_data=f"admin_users_page|{page+1}"))
+            nav_row.append(_btn("▶️", callback_data=f"admin_users_page|{page+1}", style="primary"))
         rows.append(nav_row)
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel")])
+    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
     await edit_fn(f"👥 *المستخدمون*\n\nالصفحة `{page + 1}/{total_pages or 1}`", InlineKeyboardMarkup(inline_keyboard=rows))
 
 
@@ -1185,7 +1201,7 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
         user_active_checks[uid] = current + 1
 
     try:
-        # إظهار رسالة "جاري الفحص..." مع زر غير تفاعلي (تجنب الكيبورد الفارغ)
+        # إظهار رسالة "جاري الفحص..." مع زر غير تفاعلي
         temp_kb = InlineKeyboardMarkup(inline_keyboard=[
             [_btn("⏳ جاري الفحص...", callback_data="noop")]
         ])
@@ -1241,8 +1257,8 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
                 text=msg,
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [_btn(s(uid, "check_another"), callback_data="menu_check"),
-                     _btn(s(uid, "main_menu_btn"), callback_data="main_menu")],
+                    [_btn(s(uid, "check_another"), callback_data="menu_check", style="primary"),
+                     _btn(s(uid, "main_menu_btn"), callback_data="main_menu", style="danger")],
                 ])
             )
             await log_channel(bot, msg, None)  # None = بدون بانر
@@ -1253,8 +1269,8 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
                 f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`"
             )
             await bot_edit(query, msg, InlineKeyboardMarkup(inline_keyboard=[
-                [_btn(s(uid, "try_again"), callback_data="menu_check"),
-                 _btn(s(uid, "main_menu_btn"), callback_data="main_menu")],
+                [_btn(s(uid, "try_again"), callback_data="menu_check", style="primary"),
+                 _btn(s(uid, "main_menu_btn"), callback_data="main_menu", style="danger")],
             ]), fid)
     finally:
         async with active_checks_lock:
@@ -1295,7 +1311,7 @@ async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
     filter_mode = 'otp' if gw_id == -3 else ('passed' if gw_id == -4 else 'all')
 
     stop_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(s(uid, "stop_btn"), callback_data="bulk_cancel")]
+        [_btn(s(uid, "stop_btn"), callback_data="bulk_cancel", style="danger")]
     ])
     await bot_edit(query, f"⚡ *بدء الفحص...*\n\n`{progress_bar(0,total)}`\n📊 `0/{total}`  ✅`0`  ⚠️`0`",
                    stop_kb, fid)
@@ -1440,7 +1456,7 @@ async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
     final = (f"╔══════════════════════╗\n║   {icon}   ║\n╚══════════════════════╝\n\n"
              f"📊 `{checked}/{total}`  ✅`{len(approved_list)}`  ⚠️`{errors}`")
     final_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(s(uid, "main_menu_btn"), callback_data="main_menu")]
+        [_btn(s(uid, "main_menu_btn"), callback_data="main_menu", style="primary")]
     ])
     try:
         if prog_msg.photo:
@@ -1475,7 +1491,7 @@ async def on_startup(bot: Bot):
 
 
 # ══════════════════════════════════════════════════════
-#  ERROR HANDLER
+#  ERROR HANDLER (محسّن - يتجاهل أخطاء الحذف العادية)
 # ══════════════════════════════════════════════════════
 
 @router.errors()
@@ -1483,11 +1499,19 @@ async def error_handler(event):
     """Log errors and prevent bot hanging"""
     exception = event.exception
     update = event.update
+    
+    # تجاهل أخطاء TelegramBadRequest (مثل محاولة حذف رسالة غير موجودة)
+    if isinstance(exception, TelegramBadRequest):
+        logger.debug(f"TelegramBadRequest (ignored): {exception}")
+        return
+    
     logger.error(f"Exception while handling update: {exception}", exc_info=exception)
 
     if update and hasattr(update, 'message') and update.message:
         try:
-            await update.message.answer("⚠️ حدث خطأ في الاتصال. يرجى المحاولة مرة أخرى.")
+            # ماتبعتش الرسالة دي إلا في الأخطاء الحقيقية
+            if "delete" not in str(exception).lower():
+                await update.message.answer("⚠️ حدث خطأ في الاتصال. يرجى المحاولة مرة أخرى.")
         except Exception:
             pass
 
