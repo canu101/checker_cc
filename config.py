@@ -8,6 +8,8 @@ BOT_SIGNATURE = os.environ.get("BOT_SIGNATURE", "Checked by / 𝓙𝓐𝓜𝓐�
 MAX_CARDS_REGULAR = int(os.environ.get("MAX_CARDS_REGULAR", "500"))
 LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", "-1003938237452"))
 BOT_PHOTO_URL = os.environ.get("BOT_PHOTO_URL", "")
+WOOCOMMERCE_SITE_PASSED = os.environ.get("WOOCOMMERCE_SITE_PASSED", "")
+WOOCOMMERCE_SITE_OTP = os.environ.get("WOOCOMMERCE_SITE_OTP", "")
 
 STRINGS = {
     "ar": {

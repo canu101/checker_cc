@@ -1,9 +1,13 @@
 import asyncio
+import logging
 import requests
 import json
 import re
 import time
 from database import DatabaseManager
+from config import WOOCOMMERCE_SITE_PASSED, WOOCOMMERCE_SITE_OTP
+
+logger = logging.getLogger(__name__)
 
 
 class GatewayEngine:
@@ -121,6 +125,13 @@ class GatewayEngine:
 
         return result
 
+    def _is_woocommerce_gateway(self, gw):
+        """Detect if a gateway is WooCommerce-based by its endpoint or display name."""
+        endpoint = (gw.get('api_endpoint') or '').lower()
+        name = (gw.get('display_name') or '').lower()
+        woo_markers = ['woocommerce', 'woo', '?wc-ajax=', 'wp-json/wc/', 'add-to-cart', 'checkout']
+        return any(m in endpoint or m in name for m in woo_markers)
+
     async def check_single(self, gateway_id, card_data, proxy_data=None):
         gw = self.db.get_gateway_by_id(gateway_id)
         if not gw:
@@ -140,15 +151,36 @@ class GatewayEngine:
 
         try:
             method = gw['method'].upper()
-            url = gw['api_endpoint']
             headers = json.loads(gw['headers_json']) if gw['headers_json'] else {}
             body = self.format_request(gw['body_template'], card_data)
             timeout = int(gw['timeout_seconds'] or 30)
 
+            # Resolve the target URL: prefer WooCommerce env vars when applicable
+            if self._is_woocommerce_gateway(gw):
+                # Use OTP/3DS URL for gateways that require 3DS, otherwise use the passed URL
+                woo_url = WOOCOMMERCE_SITE_OTP if gw.get('requires_3ds') else WOOCOMMERCE_SITE_PASSED
+                url = woo_url if woo_url else gw['api_endpoint']
+                logger.info(f"WooCommerce gateway detected — using URL: {url[:60]}")
+            else:
+                url = gw['api_endpoint']
+
+            if not url:
+                return {
+                    'success': False,
+                    'error': 'No endpoint URL configured for this gateway',
+                    'category': 'error',
+                    'reason': 'Missing endpoint URL',
+                    'elapsed': f"{round(time.time() - start, 2)}s",
+                    'raw': ''
+                }
+
             headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 
             if method == 'GET':
-                resp = await loop.run_in_executor(None, lambda: requests.get(url, headers=headers, proxies=proxy, timeout=timeout))
+                resp = await loop.run_in_executor(
+                    None,
+                    lambda: requests.get(url, headers=headers, proxies=proxy, timeout=timeout)
+                )
             else:
                 # Check Content-Type header to decide how to send body
                 content_type = headers.get('Content-Type', '').lower()
@@ -156,13 +188,22 @@ class GatewayEngine:
                     # Try to parse body as JSON and send with json= parameter
                     try:
                         json_body = json.loads(body)
-                        resp = await loop.run_in_executor(None, lambda: requests.post(url, json=json_body, headers=headers, proxies=proxy, timeout=timeout))
+                        resp = await loop.run_in_executor(
+                            None,
+                            lambda: requests.post(url, json=json_body, headers=headers, proxies=proxy, timeout=timeout)
+                        )
                     except json.JSONDecodeError:
                         # Invalid JSON in body, send as raw data
-                        resp = await loop.run_in_executor(None, lambda: requests.post(url, data=body, headers=headers, proxies=proxy, timeout=timeout))
+                        resp = await loop.run_in_executor(
+                            None,
+                            lambda: requests.post(url, data=body, headers=headers, proxies=proxy, timeout=timeout)
+                        )
                 else:
                     # Send as form/data
-                    resp = await loop.run_in_executor(None, lambda: requests.post(url, data=body, headers=headers, proxies=proxy, timeout=timeout))
+                    resp = await loop.run_in_executor(
+                        None,
+                        lambda: requests.post(url, data=body, headers=headers, proxies=proxy, timeout=timeout)
+                    )
 
             elapsed = round(time.time() - start, 2)
             parsed = self.analyze_response(resp.text, gw)
@@ -179,7 +220,34 @@ class GatewayEngine:
                 'http_code': resp.status_code,
                 'raw': resp.text[:1500]
             }
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Gateway {gateway_id} connection error: {e}")
+            if proxy_id:
+                self.db.increment_proxy_fail(proxy_id)
+            return {
+                'success': False,
+                'proxy_id': proxy_id,
+                'error': f"Connection error: {e}",
+                'category': 'error',
+                'reason': 'فشل الاتصال بالبوابة — تحقق من الرابط أو البروكسي',
+                'elapsed': f"{round(time.time() - start, 2)}s",
+                'raw': ''
+            }
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Gateway {gateway_id} timeout: {e}")
+            if proxy_id:
+                self.db.increment_proxy_fail(proxy_id)
+            return {
+                'success': False,
+                'proxy_id': proxy_id,
+                'error': f"Timeout: {e}",
+                'category': 'error',
+                'reason': 'انتهت مهلة الاتصال — حاول مجدداً',
+                'elapsed': f"{round(time.time() - start, 2)}s",
+                'raw': ''
+            }
         except Exception as e:
+            logger.error(f"Gateway {gateway_id} unexpected error: {e}", exc_info=True)
             if proxy_id:
                 self.db.increment_proxy_fail(proxy_id)
             return {

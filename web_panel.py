@@ -3,13 +3,17 @@ import sys
 import random
 import string
 import json
+import logging
+import asyncio
 from datetime import datetime
 from functools import wraps
-from flask import Flask, render_template_string, request, redirect, url_for, session, flash
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash, jsonify
 
 sys.path.insert(0, os.path.dirname(__file__))
 from database import DatabaseManager
 from config import ADMIN_PASSWORD, SUPPORT_USERNAME, BOT_SIGNATURE
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = ADMIN_PASSWORD + "_web_panel_secret"
@@ -865,6 +869,99 @@ LOGS_HTML = BASE + """
 @login_required
 def logs():
     return render_template_string(LOGS_HTML, active='logs', logs=db.get_recent_logs(100))
+
+# ─────────────────────────────────────────
+#  API — Gateway card check
+# ─────────────────────────────────────────
+
+@app.route('/api/check-card', methods=['POST'])
+@login_required
+def api_check_card():
+    """
+    JSON endpoint used by the admin panel to test a card through a gateway.
+    Body: { "card": "NUMBER|MM|YYYY|CVV", "gateway_id": <int> }
+    Returns a JSON result with status, reason, elapsed time, and raw response.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        card_str = (data.get('card') or '').strip()
+        gateway_id = data.get('gateway_id')
+
+        if not card_str or gateway_id is None:
+            return jsonify({'success': False, 'error': 'يجب إرسال بيانات الكارت ورقم البوابة'}), 400
+
+        # Parse card string (NUMBER|MM|YYYY|CVV)
+        parts = card_str.split('|')
+        if len(parts) != 4:
+            return jsonify({'success': False, 'error': 'صيغة الكارت غير صحيحة — استخدم: NUMBER|MM|YYYY|CVV'}), 400
+
+        card_data = {
+            'number': parts[0].strip(),
+            'month':  parts[1].strip().zfill(2),
+            'year':   parts[2].strip(),
+            'cvv':    parts[3].strip(),
+        }
+
+        gw = db.get_gateway_by_id(int(gateway_id))
+        if not gw:
+            return jsonify({'success': False, 'error': f'البوابة رقم {gateway_id} غير موجودة'}), 404
+
+        # Run the async check_single inside a new event loop (Flask is sync)
+        from gateway_engine import GatewayEngine
+        engine = GatewayEngine(db)
+
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(engine.check_single(int(gateway_id), card_data))
+        except Exception as engine_err:
+            logger.error(f"check_single raised an exception: {engine_err}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': f'خطأ في محرك الفحص: {engine_err}',
+                'category': 'error',
+                'reason': str(engine_err),
+            }), 500
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+
+        # Log the check in the database (user_id 0 = admin panel)
+        try:
+            db.log_check(
+                user_id=0,
+                gateway_id=int(gateway_id),
+                gateway_name=gw.get('display_name', 'Admin Panel'),
+                card_last4=card_data['number'][-4:],
+                status=result.get('status_text', 'UNKNOWN'),
+                category=result.get('category', 'error'),
+                raw=result.get('raw', '')[:1500],
+            )
+        except Exception as log_err:
+            logger.warning(f"Failed to log check result: {log_err}")
+
+        return jsonify({
+            'success':      result.get('success', False),
+            'category':     result.get('category', 'error'),
+            'status_text':  result.get('status_text', 'UNKNOWN'),
+            'reason':       result.get('reason', 'Unknown'),
+            'amount':       result.get('amount'),
+            'requires_3ds': result.get('requires_3ds', False),
+            'elapsed':      result.get('elapsed', 'N/A'),
+            'http_code':    result.get('http_code'),
+            'error':        result.get('error'),
+            'raw':          result.get('raw', '')[:500],
+        })
+
+    except Exception as e:
+        logger.error(f"Unexpected error in /api/check-card: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'حدث خطأ غير متوقع: {e}',
+            'category': 'error',
+        }), 500
 
 # ─────────────────────────────────────────
 #  Run
