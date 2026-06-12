@@ -249,11 +249,16 @@ async def get_banner(bot: Bot) -> Optional[str]:
 # ══════════════════════════════════════════════════════
 
 async def bot_send(bot: Bot, chat_id: int, caption: str, kb, fid=None):
+    """إرسال رسالة مع بانر اختياري، مع fallback تلقائي للنص إذا فشلت الصورة."""
     if fid:
-        return await bot.send_photo(
-            chat_id=chat_id, photo=fid, caption=caption,
-            reply_markup=kb, parse_mode="Markdown"
-        )
+        try:
+            return await bot.send_photo(
+                chat_id=chat_id, photo=fid, caption=caption,
+                reply_markup=kb, parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning(f"فشل إرسال البانر (سيتم الإرسال كنص): {e}")
+    # في حال عدم وجود fid أو فشل الصورة نرسل رسالة نصية عادية
     return await bot.send_message(
         chat_id=chat_id, text=caption,
         reply_markup=kb, parse_mode="Markdown"
@@ -305,10 +310,14 @@ async def log_channel(bot: Bot, text: str, fid=None):
 
 
 # ══════════════════════════════════════════════════════
-#  KEYBOARDS (بدون خاصية style)
+#  KEYBOARDS (تقبل style كمعامل اختياري ولا ترسله)
 # ══════════════════════════════════════════════════════
 
-def _btn(text: str, callback_data: Optional[str] = None, url: Optional[str] = None):
+def _btn(text: str, callback_data: Optional[str] = None, url: Optional[str] = None, **kwargs):
+    """
+    ينشئ زر InlineKeyboardButton.
+    يمكن إضافة style='primary' إلخ للشكل فقط في الكود، لكنه لا يُرسل لتليجرام حالياً.
+    """
     if url:
         return InlineKeyboardButton(text=text, url=url)
     return InlineKeyboardButton(text=text, callback_data=callback_data)
