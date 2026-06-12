@@ -1160,7 +1160,7 @@ async def _show_users(edit_fn, uid: int, page=0):
 
 
 # ══════════════════════════════════════════════════════
-#  Single check (مع معالجة الخطأ وتحسين الكيبورد)
+#  Single check (إرسال رسالة منفصلة بدون بانر عند النجاح)
 # ══════════════════════════════════════════════════════
 
 async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card: dict, fid=None):
@@ -1196,22 +1196,47 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
 
         if result.get('category') in ('approved_charged', 'approved_auth_only', 'approved_insufficient', 'auth_required'):
             bi = bin_service.lookup(card['number'])
+            
+            # تحديد نوع الرسالة بناءً على البوابة
+            if gw_id == -7:  # OTP/3D
+                status_icon = "🔐"
+                status_text = "OTP/3D"
+            elif gw_id == -6:  # PASSED
+                status_icon = "✅"
+                status_text = "PASSED"
+            else:
+                status_icon = "✅"
+                status_text = "APPROVED"
+            
             amt = f"\n💰 `{result['amount']}`" if result.get('amount') else ""
             tds = "\n🔐 `3DS Required`" if result.get('requires_3ds') else ""
+            
+            # ✅ إرسال بدون بانر
             msg = (
-                "╔══════════════════════╗\n║    ✅  APPROVED ✅    ║\n╚══════════════════════╝\n\n"
+                f"╔══════════════════════╗\n"
+                f"║  {status_icon}  {status_text} {status_icon}    ║\n"
+                f"╚══════════════════════╝\n\n"
                 f"💳 `{card['number']}|{card['month']}|{card['year']}|{card['cvv']}`\n"
                 f"📌 `{result['reason']}`{amt}{tds}\n\n"
                 f"━━━━━━━━━━━━━━━\n"
-                f"🏦 `{bi['bank']}`\n💎 `{bi['scheme']} — {bi['type']}`\n🌍 `{bi['country']} {bi['flag']}`\n"
+                f"🏦 `{bi['bank']}`\n"
+                f"💎 `{bi['scheme']} — {bi['type']}`\n"
+                f"🌍 `{bi['country']} {bi['flag']}`\n"
                 f"━━━━━━━━━━━━━━━\n"
-                f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n🔖 {BOT_SIGNATURE}"
+                f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n"
+                f"🔖 {BOT_SIGNATURE}"
             )
-            await bot_edit(query, msg, InlineKeyboardMarkup(inline_keyboard=[
-                [_btn(s(uid, "check_another"), callback_data="menu_check"),
-                 _btn(s(uid, "main_menu_btn"), callback_data="main_menu")],
-            ]), fid)
-            await log_channel(bot, msg, fid)
+            
+            await bot.send_message(
+                chat_id=uid,
+                text=msg,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [_btn(s(uid, "check_another"), callback_data="menu_check"),
+                     _btn(s(uid, "main_menu_btn"), callback_data="main_menu")],
+                ])
+            )
+            await log_channel(bot, msg, None)  # None = بدون بانر
         else:
             msg = (
                 "╔══════════════════════╗\n║    ❌  DECLINED ❌    ║\n╚══════════════════════╝\n\n"
@@ -1231,7 +1256,7 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
 
 
 # ══════════════════════════════════════════════════════
-#  Bulk check — نتيجة كارت كارت (آمن ومُحسَّن)
+#  Bulk check — إرسال رسائل منفصلة بدون بانر للكروت الناجحة
 # ══════════════════════════════════════════════════════
 
 async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
@@ -1308,18 +1333,42 @@ async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
 
             if show_card:
                 bi = bin_service.lookup(card['number'])
+                
+                # تحديد نوع الرسالة بناءً على البوابة
+                if gw_id == -7:  # OTP/3D
+                    status_icon = "🔐"
+                    status_text = "OTP/3D"
+                elif gw_id == -6:  # PASSED
+                    status_icon = "✅"
+                    status_text = "PASSED"
+                else:
+                    status_icon = "✅"
+                    status_text = "APPROVED"
+                
                 amt = f"\n💰 `{result['amount']}`" if result.get('amount') else ""
                 tds = "\n🔐 `3DS Required`" if result.get('requires_3ds') or is_otp else ""
+                
+                # ✅ إرسال بدون بانر
                 msg = (
-                    "╔══════════════════════╗\n║    ✅  APPROVED ✅    ║\n╚══════════════════════╝\n\n"
+                    f"╔══════════════════════╗\n"
+                    f"║  {status_icon}  {status_text} {status_icon}    ║\n"
+                    f"╚══════════════════════╝\n\n"
                     f"💳 `{card['number']}|{card['month']}|{card['year']}|{card['cvv']}`\n"
                     f"📌 `{result['reason']}`{amt}{tds}\n\n"
-                    f"🏦 `{bi['bank']}`\n💎 `{bi['scheme']} — {bi['type']}`\n🌍 `{bi['country']} {bi['flag']}`\n\n"
-                    f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n🔖 {BOT_SIGNATURE}"
+                    f"🏦 `{bi['bank']}`\n"
+                    f"💎 `{bi['scheme']} — {bi['type']}`\n"
+                    f"🌍 `{bi['country']} {bi['flag']}`\n\n"
+                    f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n"
+                    f"🔖 {BOT_SIGNATURE}"
                 )
+                
                 try:
-                    await bot_send(bot, uid, msg, InlineKeyboardMarkup(inline_keyboard=[]), fid)
-                    await log_channel(bot, msg, fid)
+                    await bot.send_message(
+                        chat_id=uid,
+                        text=msg,
+                        parse_mode="Markdown"
+                    )
+                    await log_channel(bot, msg, None)  # None = بدون بانر
                 except Exception as e:
                     logger.error(f"Bulk send approved: {e}")
             elif filter_mode == 'all':
