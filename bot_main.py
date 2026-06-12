@@ -121,6 +121,49 @@ def get_gateway_by_id(gid: int):
 BANNER_PATH = os.path.join(os.path.dirname(__file__), "banner.png")
 _banner_id: Optional[str] = None
 
+# في قائمة BUILT_IN_GATEWAYS، أضف هذه البوابات:
+{
+    'id': -5,
+    'display_name': 'Braintree AUTH',
+    'button_name': '🌲 Braintree',
+    'api_endpoint': 'braintree_builtin',
+    'method': 'POST',
+    'headers_json': '{}',
+    'body_template': '',
+    'success_pattern': 'payment method successfully added',
+    'decline_pattern': 'error|declined',
+    'error_pattern': 'error',
+    'timeout_seconds': 60,
+    'is_active': 1,
+},
+{
+    'id': -6,
+    'display_name': 'Stripe WooCommerce PASSED',
+    'button_name': '✅ Stripe PASSED',
+    'api_endpoint': 'woocommerce_stripe_passed',
+    'method': 'POST',
+    'headers_json': '{}',
+    'body_template': '',
+    'success_pattern': 'succeeded',
+    'decline_pattern': 'declined|error',
+    'error_pattern': 'error',
+    'timeout_seconds': 60,
+    'is_active': 1,
+},
+{
+    'id': -7,
+    'display_name': 'Stripe WooCommerce OTP/3D',
+    'button_name': '🔐 Stripe OTP',
+    'api_endpoint': 'woocommerce_stripe_otp',
+    'method': 'POST',
+    'headers_json': '{}',
+    'body_template': '',
+    'success_pattern': 'requires_action',
+    'decline_pattern': 'declined|succeeded',
+    'error_pattern': 'error',
+    'timeout_seconds': 60,
+    'is_active': 1,
+},
 # ══════════════════════════════════════════════════════
 #  Concurrent Check Limiter (اقصى 2 فحص لكل مستخدم)
 # ══════════════════════════════════════════════════════
