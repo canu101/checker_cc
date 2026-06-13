@@ -1,1613 +1,891 @@
-import logging
-import re
-import asyncio
+import os
+import sys
 import random
 import string
-import tempfile
-import threading
-import os
+import json
 from datetime import datetime
-from typing import Optional
-from pydantic import ConfigDict
-from aiogram import Bot, Dispatcher, Router, F
-from aiogram.client.default import DefaultBotProperties
-from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup,
-    InlineKeyboardButton, InputMediaPhoto, FSInputFile
-)
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from functools import wraps
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash
 
+sys.path.insert(0, os.path.dirname(__file__))
 from database import DatabaseManager
-from gateway_engine import GatewayEngine
-from bin_service import BINService
-from config import (
-    BOT_TOKEN, ADMIN_ID, ADMIN_PASSWORD, SUPPORT_USERNAME,
-    BOT_SIGNATURE, MAX_CARDS_REGULAR, LOG_CHANNEL_ID, STRINGS
-)
+from config import ADMIN_PASSWORD, SUPPORT_USERNAME, BOT_SIGNATURE
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+app = Flask(__name__)
+app.secret_key = ADMIN_PASSWORD + "_web_panel_secret"
 db = DatabaseManager()
-engine = GatewayEngine(db)
-bin_service = BINService()
 
-# ══════════════════════════════════════════════════════
-#  Built-in Gateways (كل البوابات المدمجة هنا)
-# ══════════════════════════════════════════════════════
-STRIPE_CHARGE_KEY     = "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"
-STRIPE_AUTH_KEY       = "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"
-STRIPE_OTP_PASSED_KEY = "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"
-
-BUILT_IN_GATEWAYS = [
-    {
-        'id': -1,
-        'display_name': 'Stripe Charge',
-        'button_name': 'Stripe CH',
-        'api_endpoint': 'https://api.stripe.com/v1/charges',
-        'method': 'POST',
-        'headers_json': f'{{"Authorization": "Bearer {STRIPE_CHARGE_KEY}", "Content-Type": "application/x-www-form-urlencoded"}}',
-        'body_template': 'amount=100&currency=usd&source[number]={card}&source[exp_month]={month}&source[exp_year]={year}&source[cvc]={cvv}&description=Checker',
-        'success_pattern': 'succeeded',
-        'decline_pattern': 'decline',
-        'error_pattern': 'error',
-        'timeout_seconds': 30,
-        'is_active': 1,
-    },
-    {
-        'id': -2,
-        'display_name': 'Stripe Auth',
-        'button_name': 'Stripe AU',
-        'api_endpoint': 'https://api.stripe.com/v1/charges',
-        'method': 'POST',
-        'headers_json': f'{{"Authorization": "Bearer {STRIPE_AUTH_KEY}", "Content-Type": "application/x-www-form-urlencoded"}}',
-        'body_template': 'amount=100&currency=usd&capture=false&source[number]={card}&source[exp_month]={month}&source[exp_year]={year}&source[cvc]={cvv}&description=Auth+Check',
-        'success_pattern': 'succeeded',
-        'decline_pattern': 'decline',
-        'error_pattern': 'error',
-        'timeout_seconds': 30,
-        'is_active': 1,
-    },
-    {
-        'id': -3,
-        'display_name': 'OTP Only',
-        'button_name': '🔐 OTP',
-        'api_endpoint': 'https://api.stripe.com/v1/charges',
-        'method': 'POST',
-        'headers_json': f'{{"Authorization": "Bearer {STRIPE_OTP_PASSED_KEY}", "Content-Type": "application/x-www-form-urlencoded"}}',
-        'body_template': 'amount=100&currency=usd&capture=false&source[number]={card}&source[exp_month]={month}&source[exp_year]={year}&source[cvc]={cvv}&description=OTP+Check',
-        'success_pattern': 'succeeded',
-        'decline_pattern': 'decline',
-        'error_pattern': 'error',
-        'timeout_seconds': 30,
-        'is_active': 1,
-    },
-    {
-        'id': -4,
-        'display_name': 'Passed Only',
-        'button_name': '✅ Passed',
-        'api_endpoint': 'https://api.stripe.com/v1/charges',
-        'method': 'POST',
-        'headers_json': f'{{"Authorization": "Bearer {STRIPE_OTP_PASSED_KEY}", "Content-Type": "application/x-www-form-urlencoded"}}',
-        'body_template': 'amount=100&currency=usd&capture=false&source[number]={card}&source[exp_month]={month}&source[exp_year]={year}&source[cvc]={cvv}&description=Passed+Check',
-        'success_pattern': 'succeeded',
-        'decline_pattern': 'decline',
-        'error_pattern': 'error',
-        'timeout_seconds': 30,
-        'is_active': 1,
-    },
-    {
-        'id': -5,
-        'display_name': 'Braintree AUTH',
-        'button_name': ' Braintree',
-        'api_endpoint': 'braintree_builtin',
-        'method': 'POST',
-        'headers_json': '{}',
-        'body_template': '',
-        'success_pattern': 'payment method successfully added',
-        'decline_pattern': 'error|declined',
-        'error_pattern': 'error',
-        'timeout_seconds': 60,
-        'is_active': 1,
-    },
-    {
-        'id': -6,
-        'display_name': 'Stripe WooCommerce PASSED',
-        'button_name': '✅ Stripe PASSED',
-        'api_endpoint': 'woocommerce_stripe_passed',
-        'method': 'POST',
-        'headers_json': '{}',
-        'body_template': '',
-        'success_pattern': 'succeeded',
-        'decline_pattern': 'declined|error',
-        'error_pattern': 'error',
-        'timeout_seconds': 60,
-        'is_active': 1,
-    },
-    {
-        'id': -7,
-        'display_name': 'Stripe WooCommerce OTP/3D',
-        'button_name': ' Stripe OTP',
-        'api_endpoint': 'woocommerce_stripe_otp',
-        'method': 'POST',
-        'headers_json': '{}',
-        'body_template': '',
-        'success_pattern': 'requires_action',
-        'decline_pattern': 'declined|succeeded',
-        'error_pattern': 'error',
-        'timeout_seconds': 60,
-        'is_active': 1,
-    },
-]
-
-
-def get_all_gateways():
-    """جمع البوابات من الكود + قاعدة البيانات."""
-    db_gws = db.get_active_gateways()
-    return BUILT_IN_GATEWAYS + db_gws
-
-
-def get_gateway_by_id(gid: int):
-    """البحث في البوابات المدمجة أولاً ثم قاعدة البيانات."""
-    for gw in BUILT_IN_GATEWAYS:
-        if gw['id'] == gid:
-            return gw
-    return db.get_gateway_by_id(gid)
-
-
-BANNER_PATH = os.path.join(os.path.dirname(__file__), "banner.png")
-_banner_id: Optional[str] = None
-
-# ══════════════════════════════════════════════════════
-#  Concurrent Check Limiter (آمن مع asyncio.Lock)
-# ══════════════════════════════════════════════════════
-user_active_checks: dict[int, int] = {}
-MAX_CONCURRENT_CHECKS = 2
-active_checks_lock = asyncio.Lock()
-
-router = Router()
-
-
-# ══════════════════════════════════════════════════════
-#  StyledButton — زر ملون (style field)
-# ══════════════════════════════════════════════════════
-
-class StyledButton(InlineKeyboardButton):
-    model_config = ConfigDict(extra='allow', populate_by_name=True)
-    style: Optional[str] = None  # primary, success, danger, secondary
-
-
-def _btn(text: str, *,
-         callback_data: Optional[str] = None,
-         url: Optional[str] = None,
-         style: Optional[str] = None,
-         **kw) -> StyledButton:
-    """إنشاء زر ملون"""
-    kwargs: dict = {'text': text}
-    if callback_data is not None:
-        kwargs['callback_data'] = callback_data
-    if url is not None:
-        kwargs['url'] = url
-    if style is not None:
-        kwargs['style'] = style
-    kwargs.update(kw)
-    return StyledButton(**kwargs)
-
-
-# ═════════════════════════════════════════════════════
-#  HELPERS
-# ═════════════════════════════════════════════════════
-
-def is_admin(uid: int) -> bool:
-    return uid == ADMIN_ID
-
-
-def is_allowed(uid: int) -> bool:
-    return is_admin(uid) or db.is_subscribed(uid)
-
-
-def get_lang(uid: int) -> str:
-    return db.get_user_language(uid)
-
-
-def s(uid: int, key: str, **kw):
-    lang = get_lang(uid)
-    st = STRINGS.get(lang, STRINGS["ar"])
-    txt = st.get(key, STRINGS["ar"].get(key, key))
-    return txt.format(**kw) if kw else txt
-
-
-def parse_card(text: str):
-    """
-    يقبل كل صيغ الكروت:
-    4111111111111111|12|2026|123
-    4111111111111111|12/26|123
-    4111111111111111|12/2026|123
-    4111111111111111 12 26 123
-    4111 1111 1111 1111|12|26|123
-    378282246310005|12|26|1234 (Amex)
-    """
-    text = text.strip()
-    
-    patterns = [
-        r'(\d{13,19})[|\s/\-:](\d{1,2})[|\s/\-:](\d{2,4})[|\s/\-:](\d{3,4})',
-        r'(\d{13,19})\s+(\d{1,2})\s*[/\-]\s*(\d{2,4})\s+(\d{3,4})',
-        r'(\d{13,19})[|\s/\-:](\d{1,2})\s*[/\-]\s*(\d{2,4})[|\s/\-:](\d{3,4})',
-        r'(\d{15})[|\s/\-:](\d{1,2})[|\s/\-:](\d{2,4})[|\s/\-:](\d{4})',
-    ]
-    
-    for pat in patterns:
-        m = re.search(pat, text)
-        if m:
-            number = m.group(1).replace(' ', '')
-            month = m.group(2).zfill(2)
-            year = m.group(3)
-            cvv = m.group(4)
-            
-            if len(year) == 2:
-                year = '20' + year
-            elif len(year) == 3:
-                year = '2' + year
-            
-            if not (1 <= int(month) <= 12):
-                continue
-            
-            if not (13 <= len(number) <= 19):
-                continue
-            
-            if not (3 <= len(cvv) <= 4):
-                continue
-            
-            return {
-                'number': number,
-                'month': month,
-                'year': year,
-                'cvv': cvv
-            }
-    
-    return None
-
-
-def validate_card_type(number: str) -> dict:
-    """يتعرف على نوع البطاقة"""
-    number = number.replace(' ', '')
-    
-    if number.startswith('4'):
-        return {'type': 'Visa', 'length': [13, 16, 19], 'cvv': 3}
-    
-    if len(number) >= 2:
-        prefix2 = int(number[:2])
-        if 51 <= prefix2 <= 55:
-            return {'type': 'Mastercard', 'length': [16], 'cvv': 3}
-        prefix4 = int(number[:4])
-        if 2221 <= prefix4 <= 2720:
-            return {'type': 'Mastercard', 'length': [16], 'cvv': 3}
-    
-    if number.startswith('34') or number.startswith('37'):
-        return {'type': 'Amex', 'length': [15], 'cvv': 4}
-    
-    if number.startswith('6011') or number.startswith('65'):
-        return {'type': 'Discover', 'length': [16, 19], 'cvv': 3}
-    if len(number) >= 3:
-        prefix3 = int(number[:3])
-        if 644 <= prefix3 <= 649:
-            return {'type': 'Discover', 'length': [16, 19], 'cvv': 3}
-    
-    if len(number) >= 4:
-        prefix4 = int(number[:4])
-        if 3528 <= prefix4 <= 3589:
-            return {'type': 'JCB', 'length': [16, 17, 18, 19], 'cvv': 3}
-    
-    if number.startswith('62'):
-        return {'type': 'UnionPay', 'length': [16, 17, 18, 19], 'cvv': 3}
-    
-    if number.startswith('36') or number.startswith('38'):
-        return {'type': 'Diners Club', 'length': [14, 15, 16, 19], 'cvv': 3}
-    if len(number) >= 3:
-        prefix3 = int(number[:3])
-        if 300 <= prefix3 <= 305:
-            return {'type': 'Diners Club', 'length': [14, 15, 16, 19], 'cvv': 3}
-    
-    return {'type': 'Unknown', 'length': [13, 14, 15, 16, 17, 18, 19], 'cvv': 3}
-
-
-def progress_bar(cur, tot, w=14):
-    if tot == 0:
-        return "░" * w + " 0%"
-    f = int((cur / tot) * w)
-    return '█' * f + '░' * (w - f) + f" {int(cur/tot*100)}%"
-
-
-# ══════════════════════════════════════════════════════
-#  BANNER
-# ══════════════════════════════════════════════════════
-
-async def get_banner(bot: Bot) -> Optional[str]:
-    global _banner_id
-    if _banner_id:
-        return _banner_id
-    if not os.path.exists(BANNER_PATH):
-        return None
-    try:
-        cached = db.get_setting('banner_file_id', '')
-        if cached:
-            _banner_id = cached
-            return _banner_id
-        msg = await bot.send_photo(
-            chat_id=ADMIN_ID,
-            photo=FSInputFile(BANNER_PATH),
-            caption=" Banner cached"
-        )
-        _banner_id = msg.photo[-1].file_id
-        db.set_setting('banner_file_id', _banner_id)
-        await msg.delete()
-        logger.info(f"Banner cached: {_banner_id[:20]}…")
-    except Exception as e:
-        logger.warning(f"Banner upload failed: {e}")
-    return _banner_id
-
-
-# ══════════════════════════════════════════════════════
-#  SEND / EDIT / LOG
-# ══════════════════════════════════════════════════════
-
-async def bot_send(bot: Bot, chat_id: int, caption: str, kb, fid=None):
-    """إرسال رسالة مع بانر اختياري، مع fallback تلقائي للنص إذا فشلت الصورة."""
-    if fid:
-        try:
-            return await bot.send_photo(
-                chat_id=chat_id, photo=fid, caption=caption,
-                reply_markup=kb, parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.warning(f"فشل إرسال البانر (سيتم الإرسال كنص): {e}")
-    return await bot.send_message(
-        chat_id=chat_id, text=caption,
-        reply_markup=kb, parse_mode="Markdown"
-    )
-
-
-async def bot_edit(query: CallbackQuery, caption: str, kb, fid=None):
-    msg = query.message
-    if not msg:
-        return
-    has_photo = bool(msg.photo)
-    if has_photo:
-        try:
-            await msg.edit_caption(caption=caption, reply_markup=kb, parse_mode="Markdown")
-            return
-        except Exception:
-            pass
-    if fid:
-        try:
-            await msg.edit_media(
-                media=InputMediaPhoto(media=fid, caption=caption, parse_mode="Markdown"),
-                reply_markup=kb
-            )
-            return
-        except Exception:
-            pass
-    try:
-        await msg.edit_text(text=caption, reply_markup=kb, parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-async def log_channel(bot: Bot, text: str, fid=None):
-    if not LOG_CHANNEL_ID:
-        return
-    try:
-        if fid:
-            await bot.send_photo(
-                chat_id=LOG_CHANNEL_ID, photo=fid,
-                caption=text, parse_mode="Markdown"
-            )
-        else:
-            await bot.send_message(
-                chat_id=LOG_CHANNEL_ID, text=text,
-                parse_mode="Markdown"
-            )
-    except Exception as e:
-        logger.error(f"Channel log: {e}")
-
-
-# ══════════════════════════════════════════════════════
-#  KEYBOARDS
-# ══════════════════════════════════════════════════════
-
-def kb_main(uid: int, is_sub: bool, is_adm: bool) -> InlineKeyboardMarkup:
-    if is_sub or is_adm:
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("📂 رفع كروت", callback_data="menu_upload", style="primary"),
-             _btn("💳 فحص كارت", callback_data="menu_check", style="success")],
-            [_btn("👤 حسابي", callback_data="menu_account", style="primary"),
-             _btn(" السجل", callback_data="menu_history", style="primary")],
-            [_btn("🎫 كود تفعيل", callback_data="menu_redeem", style="success")],
-            [_btn("️ الإعدادات", callback_data="menu_settings", style="primary"),
-             _btn("📞 الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
-        ])
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("💎 اشتراك", url=f"https://t.me/{SUPPORT_USERNAME}", style="success")],
-        [_btn("🎫 كود تفعيل", callback_data="menu_redeem", style="primary")],
-        [_btn(" الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
-    ])
-
-
-def kb_admin(uid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(" الإحصائيات", callback_data="admin_stats", style="primary"),
-         _btn("👥 المستخدمين", callback_data="admin_users", style="primary")],
-        [_btn("🎫 أكواد التفعيل", callback_data="admin_codes", style="success"),
-         _btn("⚡ البوابات", callback_data="admin_gateways", style="primary")],
-        [_btn("🔌 البروكسيات", callback_data="admin_proxies", style="primary"),
-         _btn("📋 السجلات", callback_data="admin_logs", style="primary")],
-        [_btn("⚙️ الإعدادات", callback_data="admin_settings", style="primary"),
-         _btn("🌐 لوحة الويب", url=f"https://{os.environ.get('REPLIT_DEV_DOMAIN','localhost')}:5000")],
-        [_btn("🔙 رجوع", callback_data="main_menu", style="danger")],
-    ])
-
-
-def kb_back(uid: int, target="main_menu") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(s(uid, "btn_back"), callback_data=target, style="danger")]
-    ])
-
-
-# ══════════════════════════════════════════════════════
-#  /start
-# ══════════════════════════════════════════════════════
-
-@router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    user = message.from_user
-    if not user:
-        return
-    db.get_or_create_user(user.id, user.username, user.first_name)
-    uid = user.id
-    is_sub = db.is_subscribed(uid)
-    is_adm = is_admin(uid)
-
-    if is_adm:
-        cap = s(uid, "welcome_admin", name=user.first_name)
-    elif is_sub:
-        u = db.get_user(uid)
-        cap = s(uid, "welcome_sub", name=user.first_name, exp=u.get('subscription_expiry', '---'))
-    else:
-        cap = s(uid, "welcome_guest", name=user.first_name, support=SUPPORT_USERNAME)
-
-    fid = await get_banner(message.bot)
-    kb = kb_main(uid, is_sub, is_adm)
-    await bot_send(message.bot, uid, cap, kb, fid)
-
-
-# ══════════════════════════════════════════════════════
-#  /admin
-# ══════════════════════════════════════════════════════
-
-@router.message(Command("admin"))
-async def cmd_admin(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    await state.update_data(awaiting_admin_pass=True)
-    fid = await get_banner(message.bot)
-    await bot_send(message.bot, uid,
-                   "🔐 *لوحة الأدمن*\n\nأدخل كلمة المرور:",
-                   kb_back(uid), fid)
-
-
-# ══════════════════════════════════════════════════════
-#  /addgateway
-# ══════════════════════════════════════════════════════
-
-@router.message(Command("addgateway"))
-async def cmd_addgateway(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        await message.answer("⛔ للأدمن فقط.")
-        return
-    await state.update_data(gw_step='name', gw_data={})
-    fid = await get_banner(message.bot)
-    cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(" إلغاء", callback_data="main_menu", style="danger")]
-    ])
-    await bot_send(message.bot, uid,
-                   "⚡ *إضافة بوابة جديدة*\nالخطوة 1/7\n\n📌 أرسل *اسم البوابة* (داخلي):",
-                   cancel, fid)
-
-
-# ══════════════════════════════════════════════════════
-#  Document handler
-# ═════════════════════════════════════════════════════
-
-@router.message(F.document)
-async def on_document(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    doc = message.document
-    if not doc:
-        return
-
-    data = await state.get_data()
-
-    # Proxy file upload
-    if data.get('awaiting_proxy_file'):
-        await state.update_data(awaiting_proxy_file=False)
-        if not doc.file_name.endswith('.txt'):
-            await message.answer("❌ ملفات .txt فقط.")
-            return
-        file = await message.bot.get_file(doc.file_id)
-        bytes_io = await message.bot.download_file(file.file_path)
-        lines = bytes_io.read().decode('utf-8', errors='ignore').splitlines()
-        added = db.add_proxies_bulk(lines)
-        fid = await get_banner(message.bot)
-        await bot_send(message.bot, uid,
-                       f"✅ *تمت إضافة البروكسيات*\n\n"
-                       f"📋 الكل: `{len(lines)}`\n✅ أُضيف: `{added}`",
-                       kb_back(uid, "admin_proxies"), fid)
-        return
-
-    # Card file upload
-    if not is_allowed(uid):
-        await message.answer(s(uid, "no_sub"))
-        return
-    if not doc.file_name.endswith('.txt'):
-        await message.answer("❌ ملفات .txt فقط.")
-        return
-    if data.get('is_checking'):
-        await message.answer("⏳ يوجد فحص نشط.")
-        return
-
-    file = await message.bot.get_file(doc.file_id)
-    bytes_io = await message.bot.download_file(file.file_path)
-    text = bytes_io.read().decode('utf-8', errors='ignore')
-    cards = [c for line in text.splitlines() if (c := parse_card(line.strip()))]
-
-    if not cards:
-        await message.answer("❌ لا توجد كروت صالحة.\nالصيغة: `NUMBER|MM|YYYY|CVV`",
-                             parse_mode="Markdown")
-        return
-
-    limit = 999999 if is_admin(uid) else MAX_CARDS_REGULAR
-    if len(cards) > limit:
-        await message.answer(f"❌ الحد {limit} كارت. أرسلت {len(cards)}.")
-        return
-
-    await state.update_data(bulk_cards=cards, bulk_total=len(cards))
-    gateways = get_all_gateways()
-    if not gateways:
-        await message.answer(s(uid, "no_gateways"))
-        return
-
-    rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}", style="primary")] for gw in gateways]
-    rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")])
-    fid = await get_banner(message.bot)
-    await bot_send(message.bot, uid,
-                   f"📂 *ملف الكروت*\n\n✅ صالحة: `{len(cards)}`\n\n🌐 اختر البوابة:",
-                   InlineKeyboardMarkup(inline_keyboard=rows), fid)
-
-
-# ══════════════════════════════════════════════════════
-#  Text handler
-# ══════════════════════════════════════════════════════
-
-@router.message(F.text & ~F.command)
-async def on_message(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    text = message.text.strip()
-    data = await state.get_data()
-
-    # ── Admin password ─────────────────────
-    if data.get('awaiting_admin_pass'):
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        await state.update_data(awaiting_admin_pass=False)
-        if text == ADMIN_PASSWORD:
-            await state.update_data(is_admin_verified=True)
-            fid = await get_banner(message.bot)
-            await bot_send(message.bot, uid,
-                           "✅ *تم الدخول!*\nأهلاً بك في لوحة الأدمن 👑",
-                           kb_admin(uid), fid)
-        else:
-            await message.answer(s(uid, "wrong_pass"))
-        return
-
-    # ── Code creation wizard ───────────────
-    code_step = data.get('admin_code_step')
-    if code_step and is_admin(uid):
-        await _handle_code_wizard(message, state, text, code_step)
-        return
-
-    # ── Custom extension input (message) ─────────────
-    if data.get('awaiting_custom_ext') and is_admin(uid):
-        tid = int(data['awaiting_custom_ext'])
-        await state.update_data(awaiting_custom_ext=None)
-        try:
-            hrs = int(text)
-            if hrs < 1:
-                raise ValueError
-        except ValueError:
-            await message.answer("❌ أدخل رقم صحيح (ساعات).")
-            return
-        new_exp = db.extend_subscription_hours(tid, hrs)
-        fid = await get_banner(message.bot)
-        await bot_send(message.bot, uid,
-                       f"✅ *تمت الإضافة!*\n🆔 `{tid}`\n⏰ حتى: `{new_exp.strftime('%Y-%m-%d %H:%M')}`",
-                       kb_back(uid, f"admin_user|{tid}"), fid)
-        return
-
-    # ── Proxy single input ─────────────────
-    if data.get('awaiting_proxy'):
-        await state.update_data(awaiting_proxy=False)
-        if db.add_proxy(text):
-            fid = await get_banner(message.bot)
-            total = db.count_active_proxies()
-            await bot_send(message.bot, uid,
-                           f"✅ *تمت إضافة البروكسي*\n\n`{text}`\n\n📊 المجموع: `{total}`",
-                           kb_back(uid, "admin_proxies"), fid)
-        else:
-            await message.answer("⚠️ البروكسي موجود مسبقاً.")
-        return
-
-    # ─ Redeem code ────────────────────────
-    if data.get('awaiting_redeem'):
-        await state.update_data(awaiting_redeem=False)
-        code_str = text.upper()
-        code = db.get_code(code_str)
-        if not code:
-            await message.answer(s(uid, "invalid_code"))
-        elif code['used_count'] >= code['max_uses']:
-            await message.answer(s(uid, "code_maxed"))
-        else:
-            db.use_code(code['id'], uid)
-            hours = code.get('duration_hours') or (code.get('duration_days', 1) * 24)
-            new_exp = db.extend_subscription_hours(uid, hours)
-            fid = await get_banner(message.bot)
-            await bot_send(message.bot, uid,
-                           s(uid, "redeemed", exp=new_exp.strftime('%Y-%m-%d %H:%M')),
-                           kb_main(uid, True, is_admin(uid)), fid)
-        return
-
-    # ── Card input ─────────────────────────
-    if data.get('awaiting_card'):
-        if not is_allowed(uid):
-            await message.answer(s(uid, "no_sub"))
-            return
-        card = parse_card(text)
-        if not card:
-            await message.answer(s(uid, "invalid_format"), parse_mode="Markdown")
-            return
-        await state.update_data(last_card=card, awaiting_card=False)
-        gateways = get_all_gateways()
-        if not gateways:
-            await message.answer(s(uid, "no_gateways"))
-            return
-        rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"gw|{gw['id']}", style="primary")] for gw in gateways]
-        rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")])
-        fid = await get_banner(message.bot)
-        await bot_send(message.bot, uid,
-                       f"💳 `····{card['number'][-4:]}`\n\n🌐 اختر البوابة:",
-                       InlineKeyboardMarkup(inline_keyboard=rows), fid)
-        return
-
-    # ── Gateway wizard ─────────────────────
-    gw_step = data.get('gw_step')
-    if gw_step and is_admin(uid):
-        await _handle_gw_wizard(message, state, text, gw_step)
-        return
-
-    # ── Setting value input ────────────────
-    if data.get('awaiting_setting_value') and is_admin(uid):
-        setting_key = data['awaiting_setting_value']
-        await state.update_data(awaiting_setting_value=None)
-        db.set_setting(setting_key, text)
-        fid = await get_banner(message.bot)
-        await bot_send(message.bot, uid,
-                       f"✅ *تم تحديث الإعداد*\n\n📌 `{setting_key}`\n🆕 `{text}`",
-                       kb_admin(uid), fid)
-        return
-
-    # ── Default ────────────────────────────
-    fid = await get_banner(message.bot)
-    user = db.get_user(uid)
-    name = user.get('first_name', 'User') if user else 'User'
-    await bot_send(message.bot, uid,
-                   s(uid, "menu_title", name=name),
-                   kb_main(uid, db.is_subscribed(uid), is_admin(uid)), fid)
-
-
-# ══════════════════════════════════════════════════════
-#  Code creation wizard
-# ══════════════════════════════════════════════════════
-
-async def _handle_code_wizard(message: Message, state: FSMContext, text: str, step: str):
-    uid = message.from_user.id
-    fid = await get_banner(message.bot)
-    cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("❌ إلغاء", callback_data="admin_codes", style="danger")]
-    ])
-
-    if step == 'hours':
-        try:
-            hours = int(text)
-            if hours < 1:
-                raise ValueError
-        except ValueError:
-            await message.answer("❌ أدخل رقم صحيح (ساعات).")
-            return
-        await state.update_data(admin_code_hours=hours, admin_code_step='uses')
-        await bot_send(message.bot, uid,
-                       f" *مدة الكود:* `{hours}` ساعة\n\nالخطوة 2/2\n👥 كم مرة استخدام؟",
-                       cancel, fid)
-        return
-
-    if step == 'uses':
-        try:
-            uses = int(text)
-            if uses < 1:
-                raise ValueError
-        except ValueError:
-            await message.answer("❌ أدخل رقم صحيح.")
-            return
-        data = await state.get_data()
-        hours = data.get('admin_code_hours', 24)
-        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
-        db.create_code(code, '', hours, uses, uid)
-        await state.update_data(admin_code_step=None)
-
-        days_str = f"{hours//24} يوم" if hours >= 24 else f"{hours} ساعة"
-        await bot_send(message.bot, uid,
-                       f"✅ *تم إنشاء الكود!*\n\n"
-                       f"🔑 `{code}`\n"
-                       f"⏰ المدة: `{days_str}` (`{hours}` ساعة)\n"
-                       f"👥 الاستخدام: `{uses}` مرة",
-                       kb_admin(uid), fid)
-        return
-
-
-# ══════════════════════════════════════════════════════
-#  Gateway wizard
-# ══════════════════════════════════════════════════════
-
-_GW_STEPS = ['name', 'button', 'endpoint', 'method', 'headers', 'body', 'patterns']
-_GW_PROMPTS = {
-    'name':     "الخطوة 2/7\n🔘 *اسم الزرار* (للمستخدم):",
-    'button':   "الخطوة 3/7\n🔗 *رابط API* (endpoint):",
-    'endpoint': "الخطوة 4/7\n📡 *الميثود* (POST أو GET):",
-    'method':   "الخطوة 5/7\n📋 *Headers* (JSON):\nمثال: `{\"Content-Type\": \"application/json\"}`",
-    'headers':  "الخطوة 6/7\n📝 *Body Template*:\nمتغيرات: `{card}` `{month}` `{year}` `{cvv}`",
-    'body':     "الخطوة 7/7\n🎯 *Patterns* (success|decline|error)\nأو `skip` لتخطي:",
-}
-_GW_FIELDS = ['display_name', 'button_name', 'api_endpoint', 'method', 'headers_json', 'body_template']
-
-
-async def _handle_gw_wizard(message: Message, state: FSMContext, text: str, step: str):
-    import json as _json
-    uid = message.from_user.id
-    data = await state.get_data()
-    gd = data.setdefault('gw_data', {})
-    fid = await get_banner(message.bot)
-    cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("❌ إلغاء", callback_data="main_menu", style="danger")]
-    ])
-
-    if step == 'patterns':
-        if text.lower() == 'skip':
-            gd['success_pattern'] = gd['decline_pattern'] = gd['error_pattern'] = ''
-        else:
-            parts = [p.strip() for p in text.split('|')]
-            gd['success_pattern'] = parts[0] if len(parts) > 0 else ''
-            gd['decline_pattern'] = parts[1] if len(parts) > 1 else ''
-            gd['error_pattern'] = parts[2] if len(parts) > 2 else ''
-        try:
-            hdrs = _json.loads(gd.get('headers_json', '{}'))
-        except Exception:
-            hdrs = {}
-        db.add_gateway({
-            'display_name': gd.get('display_name', ''),
-            'button_name': gd.get('button_name', gd.get('display_name', '')),
-            'endpoint': gd.get('api_endpoint', ''),
-            'method': gd.get('method', 'POST').upper(),
-            'headers': hdrs, 'body': gd.get('body_template', ''),
-            'success': gd.get('success_pattern', ''), 'decline': gd.get('decline_pattern', ''),
-            'error': gd.get('error_pattern', ''), 'timeout': 30
-        })
-        await state.update_data(gw_step=None, gw_data={})
-        await bot_send(message.bot, uid,
-                       f"✅ *تمت إضافة البوابة!*\n\n"
-                       f"📌 `{gd.get('display_name')}`\n"
-                       f"🔗 `{gd.get('api_endpoint','')[:60]}`",
-                       kb_admin(uid), fid)
-        return
-
-    idx = _GW_STEPS.index(step)
-    field = _GW_FIELDS[idx]
-    gd[field] = text
-    next_step = _GW_STEPS[idx + 1]
-    await state.update_data(gw_step=next_step, gw_data=gd)
-    await bot_send(message.bot, uid, _GW_PROMPTS[step], cancel, fid)
-
-
-# ══════════════════════════════════════════════════════
-#  Callback queries
-# ══════════════════════════════════════════════════════
-
-@router.callback_query()
-async def on_callback(query: CallbackQuery, state: FSMContext):
-    await query.answer()
-    data = query.data
-    uid = query.from_user.id
-    is_sub = db.is_subscribed(uid)
-    is_adm = is_admin(uid)
-    data_state = await state.get_data()
-    is_adm_v = data_state.get('is_admin_verified', False) or is_adm
-    fid = await get_banner(query.bot)
-
-    async def edit(cap, kb):
-        await bot_edit(query, cap, kb, fid)
-
-    # ── Main menu ──────────────────────────
-    if data == "main_menu":
-        await state.update_data(is_checking=False, bulk_cancel=True, gw_step=None,
-                                admin_code_step=None, awaiting_proxy=False,
-                                awaiting_proxy_file=False, awaiting_card=False,
-                                awaiting_redeem=False, awaiting_admin_pass=False,
-                                awaiting_setting_value=False, is_admin_verified=False)
-        user = db.get_user(uid)
-        name = user.get('first_name', 'User') if user else 'User'
-        await edit(s(uid, "menu_title", name=name), kb_main(uid, is_sub, is_adm))
-        return
-
-    if data == "menu_upload":
-        await edit(s(uid, "upload_title"), kb_back(uid))
-        return
-
-    if data == "menu_check":
-        await state.update_data(awaiting_card=True)
-        await edit(s(uid, "check_title"), kb_back(uid))
-        return
-
-    if data == "menu_account":
-        u = db.get_user(uid)
-        exp = u.get('subscription_expiry', '---') if not is_adm else '♾️'
-        chk = u.get('total_checks', 0) if u else 0
-        st = "👑 أدمن" if is_adm else ("✅ نشط" if is_sub else "❌ منتهي")
-        await edit(
-            f"┌──────────────────────┐\n│      👤  حسابي       │\n──────────────────────┘\n\n"
-            f"🆔 `{uid}`\n📌 {st}\n📅 `{exp}`\n🔢 `{chk}` فحص",
-            kb_main(uid, is_sub, is_adm)
-        )
-        return
-
-    if data == "menu_history":
-        logs_ = db.get_user_logs(uid, 10)
-        msg = "📊 *آخر الفحوصات:*\n\n" if logs_ else "📭 لا يوجد سجل."
-        for l in logs_:
-            icon = "✅" if "APPROVED" in l.get('result_status', '') else "❌"
-            msg += f"{icon} `····{l['card_last4']}` — {l['gateway_name']}\n"
-        await edit(msg, kb_main(uid, is_sub, is_adm))
-        return
-
-    if data == "menu_redeem":
-        await state.update_data(awaiting_redeem=True)
-        await edit(s(uid, "redeem_title"), kb_back(uid))
-        return
-
-    if data == "menu_settings":
-        await edit(s(uid, "settings_title"), InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("🇸🇦  العربية", callback_data="set_lang_ar", style="primary"),
-             _btn("🇬🇧  English",  callback_data="set_lang_en", style="primary")],
-            [_btn(s(uid, "btn_back"), callback_data="main_menu", style="danger")],
-        ]))
-        return
-
-    if data in ("set_lang_ar", "set_lang_en"):
-        new_lang = data.split("_")[-1]
-        db.set_user_language(uid, new_lang)
-        await state.update_data(is_checking=False, bulk_cancel=True, gw_step=None,
-                                admin_code_step=None, awaiting_proxy=False,
-                                awaiting_proxy_file=False, awaiting_card=False,
-                                awaiting_redeem=False, awaiting_admin_pass=False,
-                                awaiting_setting_value=False, is_admin_verified=False)
-        user = db.get_user(uid)
-        name = user.get('first_name', 'User') if user else 'User'
-        await edit(s(uid, "menu_title", name=name), kb_main(uid, is_sub, is_adm))
-        return
-
-    # ── Gateway select (single) ───────────
-    if data.startswith("gw|"):
-        card = data_state.get('last_card')
-        if not card:
-            await edit(s(uid, "session_expired"), kb_back(uid))
-            return
-        await _run_single(query, state, int(data.split("|")[1]), card, fid)
-        return
-
-    # ── Gateway select (bulk) ─────────────
-    if data.startswith("bulk_gw|"):
-        gw_id = int(data.split("|")[1])
-        await state.update_data(bulk_gw=gw_id)
-        gw = get_gateway_by_id(gw_id)
-        total = data_state.get('bulk_total', 0)
-        await edit(
-            f"⚡ *البوابة:* `{gw['display_name']}`\n💳 الكروت: `{total}`\n\nاضغط تأكيد للبدء:",
-            InlineKeyboardMarkup(inline_keyboard=[
-                [_btn(s(uid, "confirm_btn"), callback_data="bulk_confirm", style="success")],
-                [_btn(s(uid, "change_gw_btn"), callback_data="bulk_back", style="primary"),
-                 _btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")],
-            ])
-        )
-        return
-
-    if data == "bulk_back":
-        gateways = get_all_gateways()
-        rows = [[_btn(f"⚡  {gw['button_name']}", callback_data=f"bulk_gw|{gw['id']}", style="primary")] for gw in gateways]
-        rows.append([_btn(s(uid, "btn_cancel"), callback_data="main_menu", style="danger")])
-        await edit(f"🌐 اختر البوابة ({data_state.get('bulk_total', 0)} كارت):",
-                   InlineKeyboardMarkup(inline_keyboard=rows))
-        return
-
-    if data == "bulk_confirm":
-        await _run_bulk(query, state, fid)
-        return
-
-    if data == "bulk_cancel":
-        await state.update_data(bulk_cancel=True)
-        await query.answer("⏹ جاري الإيقاف…")
-        return
-
-    # ── Admin guard ───────────────────────
-    if data.startswith("admin_") and not is_adm_v:
-        await query.answer("⛔ ممنوع!", show_alert=True)
-        return
-
-    if data == "admin_panel":
-        await edit("👑 *لوحة الأدمن*", kb_admin(uid))
-        return
-
-    if data == "admin_stats":
-        stats = db.get_stats()[:7]
-        tu, au = db.count_users(), db.count_active_users()
-        gw_c = db.count_active_gateways()
-        px_c = db.count_active_proxies()
-        msg = (f"📊 *الإحصائيات*\n\n"
-               f"👥 مستخدمين: `{tu}` (✅ `{au}` نشط)\n"
-               f"⚡ بوابات: `{gw_c}`\n🔌 بروكسيات: `{px_c}`\n\n📈 آخر 7 أيام:\n")
-        for r in stats:
-            msg += f"`{r['date']}` ➜ {r['total_checks']} (✅{r['approved']} ❌{r['declined']})\n"
-        await edit(msg, kb_admin(uid))
-        return
-
-    if data == "admin_users":
-        await _show_users(edit, uid, page=0)
-        return
-
-    if data.startswith("admin_users_page|"):
-        page = int(data.split("|")[1])
-        await _show_users(edit, uid, page=page)
-        return
-
-    if data.startswith("admin_user|"):
-        tid = int(data.split("|")[1])
-        u = db.get_user(tid)
-        if not u:
-            return
-        blk = u['is_blocked']
-        kb_ = InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("➕ +24 ساعة", callback_data=f"admin_ext|{tid}|24", style="success"),
-             _btn("➕ +7 أيام",  callback_data=f"admin_ext|{tid}|168", style="success")],
-            [_btn("➕ +30 يوم",  callback_data=f"admin_ext|{tid}|720", style="success"),
-             _btn("✏️ مخصص",    callback_data=f"admin_ext_custom|{tid}", style="primary")],
-            [_btn("🚫 حظر" if not blk else "✅ رفع الحظر",
-                  callback_data=f"admin_blk|{tid}|{1-blk}", style="danger" if not blk else "success")],
-            [_btn(" رجوع", callback_data="admin_users", style="danger")],
-        ])
-        st = " محظور" if blk else ("✅ نشط" if u.get('subscription_expiry') else "⚫ بلا اشتراك")
-        await edit(
-            f"👤 *{u.get('first_name','---')}*\n🆔 `{tid}`\n📌 {st}\n `{u.get('total_checks',0)}` فحص",
-            kb_
-        )
-        return
-
-    if data.startswith("admin_ext|"):
-        _, tid, hrs = data.split("|")
-        new_exp = db.extend_subscription_hours(int(tid), int(hrs))
-        await query.answer(f"✅ تمت الإضافة حتى {new_exp.strftime('%Y-%m-%d %H:%M')}")
-        return
-
-    if data.startswith("admin_ext_custom|"):
-        tid = int(data.split("|")[1])
-        await state.update_data(awaiting_custom_ext=tid)
-        await edit(f"⏰ أرسل عدد الساعات للمستخدم `{tid}`:", kb_back(uid, f"admin_user|{tid}"))
-        return
-
-    if data.startswith("admin_blk|"):
-        _, tid, blk = data.split("|")
-        (db.block_user if int(blk) else db.unblock_user)(int(tid))
-        await query.answer("🚫 تم الحظر!" if int(blk) else "✅ رُفع الحظر!")
-        return
-
-    # ── Codes ──────────────────────────────
-    if data == "admin_codes":
-        await _show_codes(edit, uid)
-        return
-
-    if data == "admin_gencode":
-        await state.update_data(admin_code_step='hours')
-        await edit(
-            "🎫 *إنشاء كود تفعيل*\n\nالخطوة 1/2\n⏰ كم ساعة مدة الكود؟\n\n`24` = يوم\n`168` = أسبوع\n`720` = شهر",
-            InlineKeyboardMarkup(inline_keyboard=[
-                [_btn("❌ إلغاء", callback_data="admin_codes", style="danger")]
-            ])
-        )
-        return
-
-    if data.startswith("admin_delcode|"):
-        db.delete_code(int(data.split("|")[1]))
-        await query.answer("🗑 حُذف!")
-        await _show_codes(edit, uid)
-        return
-
-    # ── Gateways ───────────────────────────
-    if data == "admin_gateways":
-        await _show_gateways(edit, uid)
-        return
-
-    if data == "admin_gw_hint":
-        await query.answer("أرسل /addgateway لإضافة بوابة", show_alert=True)
-        return
-
-    if data.startswith("admin_delgw|"):
-        gid = int(data.split("|")[1])
-        if gid < 0:
-            await query.answer(" البوابات المدمجة لا يمكن حذفها من هنا. عدّل الكود.", show_alert=True)
-            return
-        db.delete_gateway(gid)
-        await query.answer("🗑 حُذفت!")
-        await _show_gateways(edit, uid)
-        return
-
-    # ── Proxies ────────────────────────────
-    if data == "admin_proxies":
-        await _show_proxies(edit, uid)
-        return
-
-    if data == "admin_proxy_add":
-        await state.update_data(awaiting_proxy=True)
-        await edit(
-            " *إضافة بروكسي*\n\nأرسل البروكسي:\n`host:port`\n`http://user:pass@host:port`\n`socks5://host:port`",
-            kb_back(uid, "admin_proxies")
-        )
-        return
-
-    if data == "admin_proxy_file":
-        await state.update_data(awaiting_proxy_file=True)
-        await edit(
-            "📁 *رفع ملف بروكسيات*\n\nأرسل ملف `.txt` (سطر لكل بروكسي)",
-            kb_back(uid, "admin_proxies")
-        )
-        return
-
-    if data == "admin_proxy_clear":
-        db.clear_all_proxies()
-        await query.answer("🗑 تم حذف كل البروكسيات!")
-        await _show_proxies(edit, uid)
-        return
-
-    if data.startswith("admin_delproxy|"):
-        db.delete_proxy(int(data.split("|")[1]))
-        await query.answer("🗑 حُذف!")
-        await _show_proxies(edit, uid)
-        return
-
-    # ── Logs ────────────────────────────────
-    if data == "admin_logs":
-        await _show_logs(edit, uid, page=0)
-        return
-
-    if data.startswith("admin_logs_page|"):
-        page = int(data.split("|")[1])
-        await _show_logs(edit, uid, page=page)
-        return
-
-    # ── Settings ─────────────────────────────
-    if data == "admin_settings":
-        await _show_settings(edit, uid)
-        return
-
-    if data.startswith("admin_set_setting|"):
-        setting_key = data.split("|")[1]
-        await state.update_data(awaiting_setting_value=setting_key)
-        await edit(f"⚙️ *تعديل الإعداد*\n\n `{setting_key}`\n\nأرسل القيمة الجديدة:", kb_back(uid, "admin_settings"))
-        return
-
-
-# ══════════════════════════════════════════════════════
-#  Admin panel helpers
-# ══════════════════════════════════════════════════════
-
-async def _show_codes(edit_fn, uid: int):
-    codes = db.get_all_codes()
-    rows = [[_btn("➕  إنشاء كود جديد", callback_data="admin_gencode", style="success")]]
-    for c in codes:
-        hrs = c.get('duration_hours') or c.get('duration_days', 1) * 24
-        used = f"{c['used_count']}/{c['max_uses']}"
-        lbl = c.get('label') or c['code']
-        tag = f"{hrs}h" if hrs < 24 else f"{hrs//24}d"
-        rows.append([_btn(f"🎫 {lbl} | ⏰{tag} | [{used}]", callback_data=f"admin_delcode|{c['id']}")])
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
-    await edit_fn("🎫 *أكواد التفعيل:*\n_(اضغط على كود لحذفه)_", InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-async def _show_gateways(edit_fn, uid: int):
-    gateways = get_all_gateways()
-    rows = [[_btn("➕  إضافة بوابة", callback_data="admin_gw_hint", style="success")]]
-    for gw in gateways:
-        if gw.get('id', 0) < 0:
-            rows.append([_btn(f" {gw['button_name']} — {gw['display_name']} (built-in)",
-                              callback_data="admin_gw_hint")])
-        else:
-            rows.append([_btn(f"⚡ {gw['button_name']} — {gw['display_name']}",
-                              callback_data=f"admin_delgw|{gw['id']}")])
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
-    await edit_fn(
-        "⚡ *البوابات النشطة:*\n_(اضغط للحذف — 🔒 مدمجة من الكود)_\n\nلإضافة بوابة: /addgateway",
-        InlineKeyboardMarkup(inline_keyboard=rows)
-    )
-
-
-async def _show_proxies(edit_fn, uid: int):
-    proxies = db.get_active_proxies()
-    count = len(proxies)
-    rows = [
-        [_btn("➕  بروكسي واحد",    callback_data="admin_proxy_add", style="success"),
-         _btn("📁  رفع ملف (.txt)", callback_data="admin_proxy_file", style="primary")],
-    ]
-    for p in proxies[:10]:
-        label = f"{'✅' if p['fail_count'] < 3 else '️'} {p['proxy_string'][:35]}"
-        rows.append([_btn(label, callback_data=f"admin_delproxy|{p['id']}")])
-    if count > 10:
-        rows.append([_btn(f"… و{count-10} أخرى (من لوحة الويب)", callback_data="admin_proxies", style="primary")])
-    rows.append([_btn("🗑  حذف الكل", callback_data="admin_proxy_clear", style="danger"),
-                 _btn("🔙 رجوع",       callback_data="admin_panel", style="danger")])
-    await edit_fn(
-        f"🔌 *البروكسيات*\n\n✅ نشط: `{count}`\n_(اضغط للحذف)_",
-        InlineKeyboardMarkup(inline_keyboard=rows)
-    )
-
-
-async def _show_logs(edit_fn, uid: int, page=0):
-    per_page = 10
-    logs = db.get_recent_logs(100)
-    total_pages = (len(logs) + per_page - 1) // per_page
-    page = min(page, total_pages - 1) if total_pages > 0 else 0
-    start_idx = page * per_page
-    end_idx = start_idx + per_page
-    page_logs = logs[start_idx:end_idx]
-
-    msg = f" *سجل الفحوصات*\n\nالصفحة `{page + 1}/{total_pages or 1}`\n\n"
-    for l in page_logs:
-        icon = "✅" if "APPROVED" in l.get('result_status', '') else "❌"
-        msg += f"{icon} `····{l['card_last4']}` — {l['gateway_name']}\n"
-        msg += f"   👤 `{l['user_id']}` | 🕐 {l['created_at'][:16]}\n\n"
-
-    rows = []
-    if total_pages > 1:
-        nav_row = []
-        if page > 0:
-            nav_row.append(_btn("️", callback_data=f"admin_logs_page|{page-1}", style="primary"))
-        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_logs", style="primary"))
-        if page < total_pages - 1:
-            nav_row.append(_btn("▶️", callback_data=f"admin_logs_page|{page+1}", style="primary"))
-        rows.append(nav_row)
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
-    await edit_fn(msg, InlineKeyboardMarkup(inline_keyboard=rows))
-
-
-async def _show_settings(edit_fn, uid: int):
-    settings = db.get_all_settings() if hasattr(db, 'get_all_settings') else []
-    if not settings:
-        settings_dict = {
-            'thread_count': db.get_setting('thread_count', '5'),
-            'request_timeout': db.get_setting('request_timeout', '30'),
-            'auto_clean_logs': db.get_setting('auto_clean_logs', '1'),
-            'bot_token': '***' if db.get_setting('bot_token') else 'غير محدد',
+WEB_PORT = int(os.environ.get("WEB_PORT", 5000))
+
+# ─────────────────────────────────────────
+#  Auth
+# ─────────────────────────────────────────
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+# ─────────────────────────────────────────
+#  Base HTML template
+# ─────────────────────────────────────────
+
+BASE = """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ BuyShazam Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
         }
-        settings = [{'key': k, 'value': v} for k, v in settings_dict.items()]
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .nav {
+            background: #f8f9fa;
+            padding: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .nav a {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        .nav a:hover { background: #764ba2; transform: translateY(-2px); }
+        .nav a.active { background: #764ba2; }
+        .content { padding: 30px; }
+        .flash {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .flash.danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .flash.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        th, td {
+            padding: 15px;
+            text-align: right;
+            border-bottom: 1px solid #e9ecef;
+        }
+        th { background: #667eea; color: white; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #764ba2; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        .form-group { margin: 20px 0; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-card h3 { font-size: 2.5em; margin-bottom: 10px; }
+        .stat-card p { font-size: 1.1em; opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ BuyShazam Panel</h1>
+            <p>لوحة التحكم</p>
+        </div>
+        
+        <div class="nav">
+            <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}class="active"{% endif %}>📊 لوحة التحكم</a>
+            <a href="{{ url_for('users') }}" {% if active == 'users' %}class="active"{% endif %}>👥 المستخدمون</a>
+            <a href="{{ url_for('codes') }}" {% if active == 'codes' %}class="active"{% endif %}>🎫 أكواد التفعيل</a>
+            <a href="{{ url_for('gateways') }}" {% if active == 'gateways' %}class="active"{% endif %}>⚡ البوابات</a>
+            <a href="{{ url_for('proxies') }}" {% if active == 'proxies' %}class="active"{% endif %}>🔌 البروكسيات</a>
+            <a href="{{ url_for('logs') }}" {% if active == 'logs' %}class="active"{% endif %}>📋 السجلات</a>
+            <a href="{{ url_for('logout') }}">🚪 تسجيل الخروج</a>
+        </div>
+        
+        <div class="content">
+            {% with msgs = get_flashed_messages(with_categories=true) %}
+                {% for cat,msg in msgs %}
+                    <div class="flash {{ cat }}">{{ msg }}</div>
+                {% endfor %}
+            {% endwith %}
+            
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</body>
+</html>
+"""
 
-    msg = "⚙️ *إعدادات البوت*\n\n"
-    rows = []
-    for s in settings:
-        if isinstance(s, dict):
-            key = s.get('key', '')
-            value = s.get('value', '')
+# ─────────────────────────────────────────
+#  Login
+# ─────────────────────────────────────────
+
+LOGIN_HTML = """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ BuyShazam - تسجيل الدخول</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-box h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 2em;
+        }
+        .form-group { margin: 20px 0; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>⚡ BuyShazam Panel</h1>
+        {% if error %}
+            <div class="error">❌ كلمة المرور غير صحيحة</div>
+        {% endif %}
+        <form method="POST" action="{{ url_for('login') }}">
+            <div class="form-group">
+                <label>🔐 كلمة المرور</label>
+                <input type="password" name="password" placeholder="أدخل كلمة المرور" required autofocus>
+            </div>
+            <button type="submit" class="btn">دخول</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password == ADMIN_PASSWORD:
+            session['logged_in'] = True  # ✅ تم الإصلاح
+            session.permanent = True
+            return redirect(url_for('dashboard'))
         else:
-            key, value = s
-        if key == 'bot_token' and value:
-            value = '***'
-        msg += f"📌 `{key}`: `{value}`\n"
-        rows.append([_btn(f"✏️ تعديل {key}", callback_data=f"admin_set_setting|{key}", style="primary")])
+            return render_template_string(LOGIN_HTML, error=True)
+    return render_template_string(LOGIN_HTML, error=False)
 
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
-    await edit_fn(msg, InlineKeyboardMarkup(inline_keyboard=rows))
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
+@app.route('/')
+@login_required
+def index():
+    return redirect(url_for('dashboard'))  # ✅ تم الإصلاح
 
-async def _show_users(edit_fn, uid: int, page=0):
-    per_page = 10
-    users_ = db.get_all_users()
-    total_pages = (len(users_) + per_page - 1) // per_page
-    page = min(page, total_pages - 1) if total_pages > 0 else 0
-    start_idx = page * per_page
-    end_idx = start_idx + per_page
-    page_users = users_[start_idx:end_idx]
+# ─────────────────────────────────────────
+#  Dashboard
+# ─────────────────────────────────────────
 
-    rows = []
-    for u in page_users:
-        st = "" if u.get('subscription_expiry') and u['subscription_expiry'] > datetime.now().isoformat() else "🔴"
-        name = u['first_name'] or f"User {u['user_id']}"
-        rows.append([_btn(f"{st} {name} ({u['user_id']})", callback_data=f"admin_user|{u['user_id']}")])
+DASHBOARD_HTML = BASE + """
+{% block content %}
+<h2 style="margin-bottom: 20px;">📊 لوحة التحكم</h2>
+<p style="margin-bottom: 30px; color: #666;">نظرة عامة على البوت</p>
 
-    if total_pages > 1:
-        nav_row = []
-        if page > 0:
-            nav_row.append(_btn("◀️", callback_data=f"admin_users_page|{page-1}", style="primary"))
-        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_users", style="primary"))
-        if page < total_pages - 1:
-            nav_row.append(_btn("▶️", callback_data=f"admin_users_page|{page+1}", style="primary"))
-        rows.append(nav_row)
-    rows.append([_btn("🔙 رجوع", callback_data="admin_panel", style="danger")])
-    await edit_fn(f"👥 *المستخدمون*\n\nالصفحة `{page + 1}/{total_pages or 1}`", InlineKeyboardMarkup(inline_keyboard=rows))
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>{{ total_users }}</h3>
+        <p>👥 المستخدمون</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ active_users }}</h3>
+        <p>✅ نشط</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ gateways }}</h3>
+        <p>⚡ البوابات</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ proxies }}</h3>
+        <p>🔌 البروكسيات</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ logs }}</h3>
+        <p>📋 الفحوصات</p>
+    </div>
+</div>
 
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📈 إحصائيات آخر 7 أيام</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>التاريخ</th>
+                <th>الكل</th>
+                <th>✅ موافق</th>
+                <th>❌ مرفوض</th>
+                <th>⚠️ أخطاء</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in stats %}
+            <tr>
+                <td>{{ s.date }}</td>
+                <td>{{ s.total_checks }}</td>
+                <td style="color: green;">{{ s.approved }}</td>
+                <td style="color: red;">{{ s.declined }}</td>
+                <td style="color: orange;">{{ s.errors }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" style="text-align: center; color: #999;">لا توجد بيانات بعد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+"""
 
-# ══════════════════════════════════════════════════════
-#  Single check (إرسال رسالة منفصلة بدون بانر عند النجاح)
-# ══════════════════════════════════════════════════════
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template_string(DASHBOARD_HTML,
+        active='dashboard',
+        total_users=db.count_users(),
+        active_users=db.count_active_users(),
+        gateways=db.count_active_gateways(),
+        proxies=db.count_active_proxies(),
+        logs=db.count_logs(),
+        stats=db.get_stats()[:7]
+    )
 
-async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card: dict, fid=None):
-    uid = query.from_user.id
-    bot = query.bot
+# ─────────────────────────────────────────
+#  Users
+# ─────────────────────────────────────────
 
-    # ── concurrent limit with lock ──
-    async with active_checks_lock:
-        current = user_active_checks.get(uid, 0)
-        if current >= MAX_CONCURRENT_CHECKS:
-            await bot_edit(query, "❌ لديك فحصان جاريان. انتظر الانتهاء أو الغِ أحدهما.", kb_back(uid), fid)
-            return
-        user_active_checks[uid] = current + 1
+USERS_HTML = BASE + """
+{% block content %}
+<h2 style="margin-bottom: 20px;">👥 المستخدمون</h2>
+<p style="margin-bottom: 30px; color: #666;">إدارة مستخدمي البوت</p>
 
+<table>
+    <thead>
+        <tr>
+            <th>المستخدم</th>
+            <th>المعرّف</th>
+            <th>الحالة</th>
+            <th>الانتهاء</th>
+            <th>فحوصات</th>
+            <th>إجراءات</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td>
+                {% if u.username %}@{{ u.username }}{% else %}لا يوجد{% endif %}
+                {% if u.first_name %}<br><small>{{ u.first_name }}</small>{% endif %}
+            </td>
+            <td><code>{{ u.user_id }}</code></td>
+            <td>
+                {% if u.is_blocked %}
+                    <span style="color: red;">🚫 محظور</span>
+                {% elif u.subscription_expiry and u.subscription_expiry > now %}
+                    <span style="color: green;">✅ نشط</span>
+                {% else %}
+                    <span style="color: gray;">❌ منتهي</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if u.subscription_expiry %}
+                    {{ u.subscription_expiry[:16] }}
+                {% else %}—{% endif %}
+            </td>
+            <td>{{ u.total_checks or 0 }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('users_extend') }}" style="display: inline;">
+                    <input type="hidden" name="user_id" value="{{ u.user_id }}">
+                    <input type="number" name="hours" value="24" min="1" style="width: 80px; padding: 5px;">
+                    <button type="submit" class="btn btn-success" style="padding: 5px 10px; font-size: 12px;">تمديد</button>
+                </form>
+                <form method="POST" action="{{ url_for('users_toggle_block') }}" style="display: inline;">
+                    <input type="hidden" name="user_id" value="{{ u.user_id }}">
+                    <input type="hidden" name="block" value="{{ 0 if u.is_blocked else 1 }}">
+                    <button type="submit" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;">
+                        {{ "رفع الحظر" if u.is_blocked else "حظر" }}
+                    </button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
+"""
+
+@app.route('/users')
+@login_required
+def users():
+    return render_template_string(USERS_HTML,
+        active='users',
+        users=db.get_all_users(),
+        now=datetime.now().isoformat()
+    )
+
+@app.route('/users/extend', methods=['POST'])
+@login_required
+def users_extend():
+    uid = int(request.form['user_id'])
+    hours = int(request.form['hours'])
+    new_exp = db.extend_subscription_hours(uid, hours)
+    flash(f'✅ تم تمديد الاشتراك حتى {new_exp.strftime("%Y-%m-%d %H:%M")}', 'success')
+    return redirect(url_for('users'))
+
+@app.route('/users/toggle-block', methods=['POST'])
+@login_required
+def users_toggle_block():
+    uid = int(request.form['user_id'])
+    block = int(request.form['block'])
+    if block:
+        db.block_user(uid)
+        flash(f'🚫 تم حظر المستخدم {uid}', 'danger')
+    else:
+        db.unblock_user(uid)
+        flash(f'✅ تم رفع الحظر عن {uid}', 'success')
+    return redirect(url_for('users'))
+
+# ─────────────────────────────────────────
+#  Codes
+# ─────────────────────────────────────────
+
+CODES_HTML = BASE + """
+{% block content %}
+<h2 style="margin-bottom: 20px;">🎫 أكواد التفعيل</h2>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">➕ إنشاء كود جديد</h3>
+    <form method="POST" action="{{ url_for('codes_create') }}">
+        <div class="form-group">
+            <label>الوصف / الاسم (اختياري)</label>
+            <input type="text" name="label" placeholder="مثال: كود تجريبي">
+        </div>
+        <div class="form-group">
+            <label>المدة بالساعات</label>
+            <input type="number" name="hours" value="24" min="1" required>
+            <small style="color: #666;">* 1 ساعة | 24 = يوم | 168 = أسبوع | 720 = شهر</small>
+        </div>
+        <div class="form-group">
+            <label>عدد مرات الاستخدام</label>
+            <input type="number" name="max_uses" value="1" min="1" required>
+        </div>
+        <div class="form-group">
+            <label>الكود (فارغ = توليد تلقائي)</label>
+            <input type="text" name="custom_code" placeholder="اتركه فارغاً للتوليد التلقائي">
+        </div>
+        <button type="submit" class="btn btn-success">إنشاء الكود</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📋 إدارة الأكواد</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>الكود</th>
+                <th>الوصف</th>
+                <th>المدة</th>
+                <th>الاستخدام</th>
+                <th>تاريخ الإنشاء</th>
+                <th>إجراء</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in codes %}
+            <tr>
+                <td><code>{{ c.code }}</code></td>
+                <td>{{ c.label or '—' }}</td>
+                <td>
+                    {% set hrs = c.duration_hours if c.duration_hours else c.duration_days * 24 %}
+                    {% if hrs >= 720 %}{{ (hrs // 720) }} شهر
+                    {% elif hrs >= 168 %}{{ (hrs // 168) }} أسبوع
+                    {% elif hrs >= 24 %}{{ (hrs // 24) }} يوم
+                    {% else %}{{ hrs }} ساعة{% endif %}
+                </td>
+                <td>{{ c.used_count }}/{{ c.max_uses }}</td>
+                <td>{{ c.created_at[:16] }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('codes_delete') }}" style="display: inline;">
+                        <input type="hidden" name="code_id" value="{{ c.id }}">
+                        <button type="submit" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;">حذف</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align: center; color: #999;">لا توجد أكواد بعد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+"""
+
+@app.route('/codes')
+@login_required
+def codes():
+    return render_template_string(CODES_HTML, active='codes', codes=db.get_all_codes())
+
+@app.route('/codes/create', methods=['POST'])  # ✅ تم الإصلاح
+@login_required
+def codes_create():
+    label = request.form.get('label', '').strip()
+    hours = int(request.form.get('hours', 24))
+    max_uses = int(request.form.get('max_uses', 1))  # ✅ تم الإصلاح
+    custom_code = request.form.get('custom_code', '').strip().upper()
+    code = custom_code or ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
     try:
-        temp_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [_btn("⏳ جاري الفحص...", callback_data="noop")]
-        ])
-        await bot_edit(query, s(uid, "checking"), temp_kb, fid)
-
-        gw = get_gateway_by_id(gw_id)
-        proxies = db.get_active_proxies()
-        proxy = random.choice(proxies) if proxies else None
-        result = await engine.check_single(gw, card, proxy)
-
-        db.log_check(uid, gw_id, "Single", card['number'][-4:],
-                     result.get('status_text', ''), result.get('category', ''), result.get('raw', ''))
-        db.increment_user_checks(uid)
-
-        gw = get_gateway_by_id(gw_id)
-        gw_name = gw['display_name'] if gw else "Unknown"
-
-        if result.get('category') in ('approved_charged', 'approved_auth_only', 'approved_insufficient', 'auth_required'):
-            bi = bin_service.lookup(card['number'])
-            
-            # تحديد نوع الرسالة بناءً على البوابة
-            if gw_id == -7:  # OTP/3D
-                status_icon = "🔐"
-                status_text = "OTP/3D"
-            elif gw_id == -6:  # PASSED
-                status_icon = "✅"
-                status_text = "PASSED"
-            else:
-                status_icon = "✅"
-                status_text = "APPROVED"
-            
-            amt = f"\n💰 `{result['amount']}`" if result.get('amount') else ""
-            tds = "\n🔐 `3DS Required`" if result.get('requires_3ds') else ""
-            
-            # ✅ إرسال بدون بانر
-            msg = (
-                f"══════════════════════╗\n"
-                f"║  {status_icon}  {status_text} {status_icon}    ║\n"
-                f"╚══════════════════════╝\n\n"
-                f"💳 `{card['number']}|{card['month']}|{card['year']}|{card['cvv']}`\n"
-                f"📌 `{result['reason']}`{amt}{tds}\n\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"🏦 `{bi['bank']}`\n"
-                f"💎 `{bi['scheme']} — {bi['type']}`\n"
-                f"🌍 `{bi['country']} {bi['flag']}`\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"⚡ `{gw_name}` |  `{result.get('elapsed','N/A')}`\n"
-                f"🔖 {BOT_SIGNATURE}"
-            )
-            
-            await bot.send_message(
-                chat_id=uid,
-                text=msg,
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [_btn(s(uid, "check_another"), callback_data="menu_check", style="primary"),
-                     _btn(s(uid, "main_menu_btn"), callback_data="main_menu", style="danger")],
-                ])
-            )
-            await log_channel(bot, msg, None)  # None = بدون بانر
-        else:
-            msg = (
-                "╔══════════════════════╗\n║    ❌  DECLINED ❌    ║\n╚══════════════════════╝\n\n"
-                f"💳 `····{card['number'][-4:]}`\n📌 `{result.get('reason','Unknown')}`\n\n"
-                f" `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`"
-            )
-            await bot_edit(query, msg, InlineKeyboardMarkup(inline_keyboard=[
-                [_btn(s(uid, "try_again"), callback_data="menu_check", style="primary"),
-                 _btn(s(uid, "main_menu_btn"), callback_data="main_menu", style="danger")],
-            ]), fid)
-    finally:
-        async with active_checks_lock:
-            if user_active_checks.get(uid, 0) > 1:
-                user_active_checks[uid] -= 1
-            else:
-                user_active_checks.pop(uid, None)
-
-
-# ══════════════════════════════════════════════════════
-#  Bulk check — إرسال رسائل منفصلة بدون بانر للكروت الناجحة
-# ══════════════════════════════════════════════════════
-
-async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
-    uid = query.from_user.id
-    bot = query.bot
-    data = await state.get_data()
-    cards = data.get('bulk_cards', [])
-    gw_id = data.get('bulk_gw')
-    total = len(cards)
-
-    if not cards or not gw_id:
-        await bot_edit(query, s(uid, "session_expired"), kb_back(uid), fid)
-        return
-
-    async with active_checks_lock:
-        current = user_active_checks.get(uid, 0)
-        if current >= MAX_CONCURRENT_CHECKS:
-            await bot_edit(query, "❌ لديك فحصان جاريان. انتظر الانتهاء أو الغِ أحدهما.", kb_back(uid), fid)
-            return
-        user_active_checks[uid] = current + 1
-
-    gw = get_gateway_by_id(gw_id)
-    gw_name = gw['display_name'] if gw else "Unknown"
-    await state.update_data(is_checking=True, bulk_cancel=False)
-    approved_list, errors, checked = [], 0, 0
-
-    filter_mode = 'otp' if gw_id == -3 else ('passed' if gw_id == -4 else 'all')
-
-    stop_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(s(uid, "stop_btn"), callback_data="bulk_cancel", style="danger")]
-    ])
-    await bot_edit(query, f"⚡ *بدء الفحص...*\n\n`{progress_bar(0,total)}`\n📊 `0/{total}`  ✅`0`  ⚠️`0`",
-                   stop_kb, fid)
-    prog_msg = query.message
-    last_update = asyncio.get_running_loop().time()
-
-    try:
-        for i, card in enumerate(cards, 1):
-            state_data = await state.get_data()
-            if state_data.get('bulk_cancel'):
-                break
-
-            if not is_allowed(uid):
-                await state.update_data(bulk_cancel=True)
-                try:
-                    await bot_send(bot, uid, "⛔ انتهى اشتراكك. تم إيقاف الفحص فوراً.", None, fid)
-                except Exception:
-                    pass
-                break
-
-            gw = get_gateway_by_id(gw_id)
-            proxies = db.get_active_proxies()
-            proxy = random.choice(proxies) if proxies else None
-            result = await engine.check_single(gw, card, proxy)
-            checked = i
-
-            cat = result.get('category', 'unknown')
-            is_approved = cat in ('approved_charged', 'approved_auth_only', 'approved_insufficient')
-            is_otp = cat == 'auth_required'
-            is_passed = is_approved or is_otp
-
-            show_card = False
-            if filter_mode == 'otp' and is_otp:
-                show_card = True
-                approved_list.append({'card': card, 'result': result})
-            elif filter_mode == 'passed' and is_approved:
-                show_card = True
-                approved_list.append({'card': card, 'result': result})
-            elif filter_mode == 'all' and is_passed:
-                show_card = True
-                approved_list.append({'card': card, 'result': result})
-            elif cat == 'error' or not result.get('success'):
-                errors += 1
-
-            if show_card:
-                bi = bin_service.lookup(card['number'])
-                
-                # تحديد نوع الرسالة بناءً على البوابة
-                if gw_id == -7:  # OTP/3D
-                    status_icon = "🔐"
-                    status_text = "OTP/3D"
-                elif gw_id == -6:  # PASSED
-                    status_icon = "✅"
-                    status_text = "PASSED"
-                else:
-                    status_icon = "✅"
-                    status_text = "APPROVED"
-                
-                amt = f"\n💰 `{result['amount']}`" if result.get('amount') else ""
-                tds = "\n🔐 `3DS Required`" if result.get('requires_3ds') or is_otp else ""
-                
-                # ✅ إرسال بدون بانر
-                msg = (
-                    f"╔══════════════════════╗\n"
-                    f"║  {status_icon}  {status_text} {status_icon}    ║\n"
-                    f"╚══════════════════════╝\n\n"
-                    f"💳 `{card['number']}|{card['month']}|{card['year']}|{card['cvv']}`\n"
-                    f"📌 `{result['reason']}`{amt}{tds}\n\n"
-                    f"🏦 `{bi['bank']}`\n"
-                    f"💎 `{bi['scheme']} — {bi['type']}`\n"
-                    f"🌍 `{bi['country']} {bi['flag']}`\n\n"
-                    f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n"
-                    f"🔖 {BOT_SIGNATURE}"
-                )
-                
-                try:
-                    await bot.send_message(
-                        chat_id=uid,
-                        text=msg,
-                        parse_mode="Markdown"
-                    )
-                    await log_channel(bot, msg, None)  # None = بدون بانر
-                except Exception as e:
-                    logger.error(f"Bulk send approved: {e}")
-            elif filter_mode == 'all':
-                msg = (
-                    f"❌ *DECLINED* | `····{card['number'][-4:]}`\n"
-                    f" `{result.get('reason','Declined')}`\n"
-                    f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`"
-                )
-                try:
-                    await bot_send(bot, uid, msg, InlineKeyboardMarkup(inline_keyboard=[]), fid)
-                except Exception as e:
-                    logger.error(f"Bulk send declined: {e}")
-
-            now = asyncio.get_running_loop().time()
-            if now - last_update >= 2 or i == total or i % 5 == 0:
-                try:
-                    status = '🛑 جاري الإيقاف...' if state_data.get('bulk_cancel') else '⏳ يرجى الانتظار...'
-                    cap = (f"⚡ *جاري الفحص...*\n\n`{progress_bar(i,total)}`\n"
-                           f"📊 `{i}/{total}`  ✅`{len(approved_list)}`  ️`{errors}`\n\n{status}")
-                    if prog_msg.photo:
-                        await prog_msg.edit_caption(caption=cap, reply_markup=stop_kb, parse_mode="Markdown")
-                    else:
-                        await prog_msg.edit_text(text=cap, reply_markup=stop_kb, parse_mode="Markdown")
-                    last_update = now
-                except Exception:
-                    pass
-
-            await asyncio.sleep(0.2)
-    finally:
-        await state.update_data(is_checking=False)
-
-        async with active_checks_lock:
-            if user_active_checks.get(uid, 0) > 1:
-                user_active_checks[uid] -= 1
-            else:
-                user_active_checks.pop(uid, None)
-
-    if approved_list:
-        content = "\n".join(
-            f"{i['card']['number']}|{i['card']['month']}|{i['card']['year']}|{i['card']['cvv']}"
-            for i in approved_list
-        )
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-            f.write(content)
-            tmp = f.name
-        try:
-            lbl = 'OTP' if filter_mode == 'otp' else ('Passed' if filter_mode == 'passed' else 'Approved')
-            await bot.send_document(
-                chat_id=uid,
-                document=FSInputFile(tmp),
-                caption=f"✅ {lbl}: {len(approved_list)} / {checked}"
-            )
-        except Exception as e:
-            logger.error(f"File send: {e}")
-        finally:
-            os.remove(tmp)
-
-    icon = "🛑 توقّف" if (await state.get_data()).get('bulk_cancel') else "✅ اكتمل"
-    final = (f"╔══════════════════════╗\n║   {icon}   ║\n╚══════════════════════╝\n\n"
-             f"📊 `{checked}/{total}`  ✅`{len(approved_list)}`  ⚠️`{errors}`")
-    final_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(s(uid, "main_menu_btn"), callback_data="main_menu", style="primary")]
-    ])
-    try:
-        if prog_msg.photo:
-            await prog_msg.edit_caption(caption=final, reply_markup=final_kb, parse_mode="Markdown")
-        else:
-            await prog_msg.edit_text(text=final, reply_markup=final_kb, parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-# ═════════════════════════════════════════════════════
-#  Web panel & startup
-# ══════════════════════════════════════════════════════
-
-def _start_web_panel():
-    try:
-        from web_panel import app as flask_app
-        port = int(os.environ.get("WEB_PORT", 5000))
-        logger.info(f"🌐 Web panel starting on port {port}")
-        flask_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    except ImportError:
-        logger.warning("⚠️ ملف web_panel.py غير موجود. لن تعمل لوحة الويب.")
+        db.create_code(code, label, hours, max_uses, 0)
+        flash(f'✅ تم إنشاء الكود: {code} — {hours} ساعة — {max_uses} استخدام', 'success')
     except Exception as e:
-        logger.error(f"Web panel error: {e}")
+        flash(f'❌ خطأ: {e}', 'danger')
+    return redirect(url_for('codes'))
 
+@app.route('/codes/delete', methods=['POST'])
+@login_required
+def codes_delete():
+    db.delete_code(int(request.form['code_id']))
+    flash('🗑 تم حذف الكود', 'info')
+    return redirect(url_for('codes'))
 
-async def on_startup(bot: Bot):
-    await get_banner(bot)
-    t = threading.Thread(target=_start_web_panel, daemon=True, name="WebPanel")
-    t.start()
-    logger.info("Bot initialized. Banner cached. Web panel thread started.")
+# ─────────────────────────────────────────
+#  Gateways
+# ─────────────────────────────────────────
 
+GATEWAYS_HTML = BASE + """
+{% block content %}
+<h2 style="margin-bottom: 20px;">⚡ البوابات</h2>
 
-# ══════════════════════════════════════════════════════
-#  ERROR HANDLER (محسّن - يتجاهل أخطاء الحذف العادية)
-# ══════════════════════════════════════════════════════
+<div class="card">
+    <h3 style="margin-bottom: 20px;">➕ إضافة بوابة جديدة</h3>
+    <form method="POST" action="{{ url_for('gateways_add') }}">
+        <div class="form-group">
+            <label>اسم البوابة (داخلي)</label>
+            <input type="text" name="display_name" required>
+        </div>
+        <div class="form-group">
+            <label>اسم الزرار (للمستخدم)</label>
+            <input type="text" name="button_name" required>
+        </div>
+        <div class="form-group">
+            <label>رابط API (Endpoint)</label>
+            <input type="text" name="endpoint" required placeholder="https://api.example.com/charge">
+        </div>
+        <div class="form-group">
+            <label>الميثود</label>
+            <select name="method">
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Headers (JSON)</label>
+            <textarea name="headers" rows="3" placeholder='{"Content-Type": "application/json"}'>{}</textarea>
+        </div>
+        <div class="form-group">
+            <label>Body Template</label>
+            <textarea name="body" rows="3" placeholder="amount=100&card={card}&month={month}&year={year}&cvv={cvv}"></textarea>
+            <small style="color: #666;">متغيرات: {card} {month} {year} {cvv}</small>
+        </div>
+        <div class="form-group">
+            <label>Success Pattern (Regex)</label>
+            <input type="text" name="success" placeholder="succeeded|approved">
+        </div>
+        <div class="form-group">
+            <label>Decline Pattern (Regex)</label>
+            <input type="text" name="decline" placeholder="declined|rejected">
+        </div>
+        <div class="form-group">
+            <label>Error Pattern (Regex)</label>
+            <input type="text" name="error" placeholder="error|failed">
+        </div>
+        <div class="form-group">
+            <label>Timeout (ثانية)</label>
+            <input type="number" name="timeout" value="30" min="5" max="120">
+        </div>
+        <button type="submit" class="btn btn-success">إضافة البوابة</button>
+    </form>
+</div>
 
-@router.errors()
-async def error_handler(event):
-    """Log errors and prevent bot hanging"""
-    exception = event.exception
-    update = event.update
-    
-    # تجاهل أخطاء TelegramBadRequest (مثل محاولة حذف رسالة غير موجودة)
-    if isinstance(exception, TelegramBadRequest):
-        logger.debug(f"TelegramBadRequest (ignored): {exception}")
-        return
-    
-    logger.error(f"Exception while handling update: {exception}", exc_info=exception)
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📋 البوابات النشطة</h3>
+    {% for gw in gateways %}
+    <div style="border: 1px solid #e9ecef; padding: 15px; margin: 10px 0; border-radius: 8px;">
+        <h4>⚡ {{ gw.display_name }}</h4>
+        <p><strong>زرار:</strong> {{ gw.button_name }}</p>
+        <p><strong>Endpoint:</strong> <code>{{ gw.api_endpoint[:60] }}{% if gw.api_endpoint|length > 60 %}…{% endif %}</code></p>
+        <p><strong>Method:</strong> {{ gw.method }}</p>
+        {% if gw.success_pattern %}<p><strong>Success:</strong> <code>{{ gw.success_pattern }}</code></p>{% endif %}
+        {% if gw.decline_pattern %}<p><strong>Decline:</strong> <code>{{ gw.decline_pattern }}</code></p>{% endif %}
+        {% if gw.id > 0 %}
+        <form method="POST" action="{{ url_for('gateways_delete') }}" style="margin-top: 10px;">
+            <input type="hidden" name="gw_id" value="{{ gw.id }}">
+            <button type="submit" class="btn btn-danger" style="padding: 5px 15px; font-size: 12px;">حذف</button>
+        </form>
+        {% else %}
+        <p style="color: #999; font-size: 12px;">🔒 بوابة مدمجة (لا يمكن حذفها)</p>
+        {% endif %}
+    </div>
+    {% else %}
+    <p style="text-align: center; color: #999;">لا توجد بوابات بعد. أضف أول بوابة!</p>
+    {% endfor %}
+</div>
+{% endblock %}
+"""
 
-    if update and hasattr(update, 'message') and update.message:
+@app.route('/gateways')
+@login_required
+def gateways():
+    return render_template_string(GATEWAYS_HTML, active='gateways', gateways=db.get_all_gateways())
+
+@app.route('/gateways/add', methods=['POST'])  # ✅ تم الإصلاح
+@login_required
+def gateways_add():
+    try:
+        headers = request.form.get('headers', '{}')
         try:
-            if "delete" not in str(exception).lower():
-                await update.message.answer("⚠️ حدث خطأ في الاتصال. يرجى المحاولة مرة أخرى.")
+            json.loads(headers)
         except Exception:
-            pass
+            headers = '{}'
+        db.add_gateway({
+            'display_name': request.form['display_name'],
+            'button_name': request.form['button_name'],
+            'endpoint': request.form['endpoint'],
+            'method': request.form.get('method', 'POST'),
+            'headers': headers,
+            'body': request.form.get('body', ''),
+            'success': request.form.get('success', ''),
+            'decline': request.form.get('decline', ''),
+            'error': request.form.get('error', ''),
+            'timeout': int(request.form.get('timeout', 30)),
+        })
+        flash(f'✅ تمت إضافة البوابة: {request.form["display_name"]}', 'success')
+    except Exception as e:
+        flash(f'❌ خطأ: {e}', 'danger')
+    return redirect(url_for('gateways'))
 
+@app.route('/gateways/delete', methods=['POST'])
+@login_required
+def gateways_delete():
+    db.delete_gateway(int(request.form['gw_id']))
+    flash('🗑 تم حذف البوابة', 'info')
+    return redirect(url_for('gateways'))
 
-# ══════════════════════════════════════════════════════
-#  main
-# ══════════════════════════════════════════════════════
+# ─────────────────────────────────────────
+#  Proxies
+# ─────────────────────────────────────────
 
-def main():
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN غير موجود!")
-        return
+PROXIES_HTML = BASE + """
+{% block content %}
+<h2 style="margin-bottom: 20px;">🔌 البروكسيات</h2>
+<p style="margin-bottom: 30px; color: #666;">{{ proxies|length }} بروكسي — {{ active_count }} نشط</p>
 
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
-    storage = MemoryStorage()
-    dp = Dispatcher(storage=storage)
-    dp.startup.register(on_startup)
-    dp.include_router(router)
+<div class="card">
+    <h3 style="margin-bottom: 20px;">➕ إضافة بروكسي</h3>
+    <form method="POST" action="{{ url_for('proxies_add') }}">
+        <div class="form-group">
+            <label>البروكسي</label>
+            <input type="text" name="proxy" placeholder="host:port أو http://user:pass@host:port" required>
+        </div>
+        <button type="submit" class="btn btn-success">إضافة</button>
+    </form>
+</div>
 
-    print("🚀 البوت يعمل...")
-    dp.run_polling(bot, allowed_updates=["message", "callback_query"])
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📁 إضافة متعددة</h3>
+    <form method="POST" action="{{ url_for('proxies_bulk') }}">
+        <div class="form-group">
+            <label>البروكسيات (سطر لكل بروكسي)</label>
+            <textarea name="proxies" rows="5" placeholder="host1:port1&#10;host2:port2&#10;http://user:pass@host3:port3"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">إضافة الكل</button>
+    </form>
+</div>
 
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📋 البروكسيات النشطة</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>البروكسي</th>
+                <th>البروتوكول</th>
+                <th>الحالة</th>
+                <th>أخطاء</th>
+                <th>إجراء</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in proxies %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><code>{{ p.proxy_string }}</code></td>
+                <td>{{ p.protocol }}</td>
+                <td>
+                    {% if p.is_active and p.fail_count < 5 %}
+                        <span style="color: green;">✅ نشط</span>
+                    {% else %}
+                        <span style="color: red;">❌ معطّل</span>
+                    {% endif %}
+                </td>
+                <td>{{ p.fail_count }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('proxies_delete') }}" style="display: inline;">
+                        <input type="hidden" name="proxy_id" value="{{ p.id }}">
+                        <button type="submit" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;">حذف</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align: center; color: #999;">لا توجد بروكسيات بعد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <form method="POST" action="{{ url_for('proxies_clear') }}" style="margin-top: 20px;">
+        <button type="submit" class="btn btn-danger">🗑 حذف الكل</button>
+    </form>
+</div>
+{% endblock %}
+"""
 
-if __name__ == "__main__":
-    main()
+@app.route('/proxies')
+@login_required
+def proxies():
+    all_p = db.get_all_proxies()
+    return render_template_string(PROXIES_HTML,
+        active='proxies',
+        proxies=all_p,
+        active_count=sum(1 for p in all_p if p['is_active'] and p['fail_count'] < 5)
+    )
+
+@app.route('/proxies/add', methods=['POST'])
+@login_required
+def proxies_add():
+    proxy = request.form['proxy'].strip()
+    if db.add_proxy(proxy):
+        flash(f'✅ تمت إضافة البروكسي', 'success')
+    else:
+        flash('⚠️ البروكسي موجود مسبقاً', 'info')
+    return redirect(url_for('proxies'))
+
+@app.route('/proxies/bulk', methods=['POST'])
+@login_required
+def proxies_bulk():
+    lines = request.form['proxies'].strip().splitlines()
+    added = db.add_proxies_bulk(lines)
+    flash(f'✅ تمت إضافة {added} بروكسي من أصل {len(lines)}', 'success')
+    return redirect(url_for('proxies'))
+
+@app.route('/proxies/delete', methods=['POST'])
+@login_required
+def proxies_delete():
+    db.delete_proxy(int(request.form['proxy_id']))
+    return redirect(url_for('proxies'))
+
+@app.route('/proxies/clear', methods=['POST'])
+@login_required
+def proxies_clear():
+    db.clear_all_proxies()
+    flash('🗑 تم حذف جميع البروكسيات', 'info')
+    return redirect(url_for('proxies'))
+
+# ─────────────────────────────────────────
+#  Logs
+# ─────────────────────────────────────────
+
+LOGS_HTML = BASE + """
+{% block content %}
+<h2 style="margin-bottom: 20px;">📋 سجل الفحوصات</h2>
+<p style="margin-bottom: 30px; color: #666;">آخر 100 عملية فحص</p>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>الوقت</th>
+                <th>المستخدم</th>
+                <th>الكارت</th>
+                <th>البوابة</th>
+                <th>النتيجة</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for l in logs %}
+            <tr>
+                <td>{{ l.created_at[:16] }}</td>
+                <td><code>{{ l.user_id }}</code></td>
+                <td><code>****{{ l.card_last4 }}</code></td>
+                <td>{{ l.gateway_name }}</td>
+                <td>
+                    {% if 'APPROVED' in l.result_status %}
+                        <span style="color: green;">✅ {{ l.result_status }}</span>
+                    {% else %}
+                        <span style="color: red;">❌ {{ l.result_status }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" style="text-align: center; color: #999;">لا توجد سجلات</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+"""
+
+@app.route('/logs')
+@login_required
+def logs():
+    return render_template_string(LOGS_HTML, active='logs', logs=db.get_recent_logs(100))
+
+# ─────────────────────────────────────────
+#  Run
+# ─────────────────────────────────────────
+
+if __name__ == '__main__':
+    print(f"🌐 Web Panel running on port {WEB_PORT}")
+    app.run(host='0.0.0.0', port=WEB_PORT, debug=False, use_reloader=False)
