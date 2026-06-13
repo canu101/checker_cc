@@ -34,32 +34,163 @@ def login_required(f):
 # ─────────────────────────────────────────
 
 BASE = """
-    ⚡ BuyShazam
-    لوحة التحكم
-[ لوحة التحكم
-    ]({{ url_for('dashboard') }})
-[ المستخدمون
-    ]({{ url_for('users') }})
-[ أكواد التفعيل
-    ]({{ url_for('codes') }})
-[ البوابات
-    ]({{ url_for('gateways') }})
-[ البروكسيات
-    ]({{ url_for('proxies') }})
-[ السجلات
-    ]({{ url_for('logs') }})
-[ تسجيل الخروج
-    ]({{ url_for('logout') }})
-  {% with msgs = get_flashed_messages(with_categories=true) %}
-    {% for cat,msg in msgs %}
-      
-        {{ msg }}
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ BuyShazam Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .nav {
+            background: #f8f9fa;
+            padding: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .nav a {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        .nav a:hover { background: #764ba2; transform: translateY(-2px); }
+        .nav a.active { background: #764ba2; }
+        .content { padding: 30px; }
+        .flash {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .flash.danger { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .flash.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        th, td {
+            padding: 15px;
+            text-align: right;
+            border-bottom: 1px solid #e9ecef;
+        }
+        th { background: #667eea; color: white; font-weight: 600; }
+        tr:hover { background: #f8f9fa; }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #764ba2; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        .form-group { margin: 20px 0; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-card h3 { font-size: 2.5em; margin-bottom: 10px; }
+        .stat-card p { font-size: 1.1em; opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ BuyShazam Panel</h1>
+            <p>لوحة التحكم</p>
+        </div>
         
-    {% endfor %}
-  {% endwith %}
-
-  {% block content %}{% endblock %}
-
+        <div class="nav">
+            <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}class="active"{% endif %}>📊 لوحة التحكم</a>
+            <a href="{{ url_for('users') }}" {% if active == 'users' %}class="active"{% endif %}>👥 المستخدمون</a>
+            <a href="{{ url_for('codes') }}" {% if active == 'codes' %}class="active"{% endif %}>🎫 أكواد التفعيل</a>
+            <a href="{{ url_for('gateways') }}" {% if active == 'gateways' %}class="active"{% endif %}>⚡ البوابات</a>
+            <a href="{{ url_for('proxies') }}" {% if active == 'proxies' %}class="active"{% endif %}>🔌 البروكسيات</a>
+            <a href="{{ url_for('logs') }}" {% if active == 'logs' %}class="active"{% endif %}>📋 السجلات</a>
+            <a href="{{ url_for('logout') }}">🚪 تسجيل الخروج</a>
+        </div>
+        
+        <div class="content">
+            {% with msgs = get_flashed_messages(with_categories=true) %}
+                {% for cat,msg in msgs %}
+                    <div class="flash {{ cat }}">{{ msg }}</div>
+                {% endfor %}
+            {% endwith %}
+            
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+</body>
+</html>
 """
 
 # ─────────────────────────────────────────
@@ -67,22 +198,107 @@ BASE = """
 # ─────────────────────────────────────────
 
 LOGIN_HTML = """
-⚡
-BuyShazam Panel
-أدخل كلمة المرور للدخول
-  {% if error %}
-   ❌ كلمة المرور غير صحيحة 
-  {% endif %}
-   دخول 
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ BuyShazam - تسجيل الدخول</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-box h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 2em;
+        }
+        .form-group { margin: 20px 0; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>⚡ BuyShazam Panel</h1>
+        {% if error %}
+            <div class="error">❌ كلمة المرور غير صحيحة</div>
+        {% endif %}
+        <form method="POST" action="{{ url_for('login') }}">
+            <div class="form-group">
+                <label>🔐 كلمة المرور</label>
+                <input type="password" name="password" placeholder="أدخل كلمة المرور" required autofocus>
+            </div>
+            <button type="submit" class="btn">دخول</button>
+        </form>
+    </div>
+</body>
+</html>
 """
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if request.form.get('password') == ADMIN_PASSWORD:
+        password = request.form.get('password', '')
+        if password == ADMIN_PASSWORD:
             session['logged_in'] = True  # ✅ تم الإصلاح
+            session.permanent = True
             return redirect(url_for('dashboard'))
-        return render_template_string(LOGIN_HTML, error=True)
+        else:
+            return render_template_string(LOGIN_HTML, error=True)
     return render_template_string(LOGIN_HTML, error=False)
 
 @app.route('/logout')
@@ -101,34 +317,61 @@ def index():
 
 DASHBOARD_HTML = BASE + """
 {% block content %}
- 📊 لوحة التحكم نظرة عامة على البوت  المستخدمون {{ total_users }} {{ active_users }} نشط  البوابات {{ gateways }}  البروكسيات {{ proxies }}  الفحوصات {{ logs }}  إحصائيات آخر 7 أيام
-| التاريخ
-|الكل
-|✅ موافق
-|❌ مرفوض
-|⚠️ أخطاء
-|
-| ---|---|---|---|---|
-        {% for s in stats %}
-        
-| {{ s.date }}
-|{{ s.total_checks }}
-|{{ s.approved }}
-|{{ s.declined }}
-|{{ s.errors }}
-|
-| ---|---|---|---|---|
-        {% else %}
-        
-| لا توجد بيانات بعد
-|لا توجد بيانات بعد
-|لا توجد بيانات بعد
-|لا توجد بيانات بعد
-|لا توجد بيانات بعد
-|
-| ---|---|---|---|---|
-        {% endfor %}
-      
+<h2 style="margin-bottom: 20px;">📊 لوحة التحكم</h2>
+<p style="margin-bottom: 30px; color: #666;">نظرة عامة على البوت</p>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>{{ total_users }}</h3>
+        <p>👥 المستخدمون</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ active_users }}</h3>
+        <p>✅ نشط</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ gateways }}</h3>
+        <p>⚡ البوابات</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ proxies }}</h3>
+        <p>🔌 البروكسيات</p>
+    </div>
+    <div class="stat-card">
+        <h3>{{ logs }}</h3>
+        <p>📋 الفحوصات</p>
+    </div>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📈 إحصائيات آخر 7 أيام</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>التاريخ</th>
+                <th>الكل</th>
+                <th>✅ موافق</th>
+                <th>❌ مرفوض</th>
+                <th>⚠️ أخطاء</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in stats %}
+            <tr>
+                <td>{{ s.date }}</td>
+                <td>{{ s.total_checks }}</td>
+                <td style="color: green;">{{ s.approved }}</td>
+                <td style="color: red;">{{ s.declined }}</td>
+                <td style="color: orange;">{{ s.errors }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" style="text-align: center; color: #999;">لا توجد بيانات بعد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}
 """
 
@@ -150,44 +393,62 @@ def dashboard():
 # ─────────────────────────────────────────
 
 USERS_HTML = BASE + """
-{% block content %} المستخدمونإدارة مستخدمي البوت
-| المستخدم
-|المعرّف
-|الحالة
-|الانتهاء
-|فحوصات
-|إجراءات
-|
-| ---|---|---|---|---|---|
+{% block content %}
+<h2 style="margin-bottom: 20px;">👥 المستخدمون</h2>
+<p style="margin-bottom: 30px; color: #666;">إدارة مستخدمي البوت</p>
+
+<table>
+    <thead>
+        <tr>
+            <th>المستخدم</th>
+            <th>المعرّف</th>
+            <th>الحالة</th>
+            <th>الانتهاء</th>
+            <th>فحوصات</th>
+            <th>إجراءات</th>
+        </tr>
+    </thead>
+    <tbody>
         {% for u in users %}
-        
-| 
-            {% if u.username %} @{{ u.username }} {% else %} لا يوجد {% endif %}
-            {% if u.first_name %} {{ u.first_name }} {% endif %}
-          
-|{{ u.user_id }}
-|
-            {% if u.is_blocked %}
-               🚫 محظور 
-            {% elif u.subscription_expiry and u.subscription_expiry > now %}
-               ✅ نشط 
-            {% else %}
-               ❌ منتهي 
-            {% endif %}
-          
-|
-            {% if u.subscription_expiry %}
-               {{ u.subscription_expiry[:16] }} 
-            {% else %}—{% endif %}
-          
-|{{ u.total_checks or 0 }}
-|                     
-|
-| ---|---|---|---|---|---|
+        <tr>
+            <td>
+                {% if u.username %}@{{ u.username }}{% else %}لا يوجد{% endif %}
+                {% if u.first_name %}<br><small>{{ u.first_name }}</small>{% endif %}
+            </td>
+            <td><code>{{ u.user_id }}</code></td>
+            <td>
+                {% if u.is_blocked %}
+                    <span style="color: red;">🚫 محظور</span>
+                {% elif u.subscription_expiry and u.subscription_expiry > now %}
+                    <span style="color: green;">✅ نشط</span>
+                {% else %}
+                    <span style="color: gray;">❌ منتهي</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if u.subscription_expiry %}
+                    {{ u.subscription_expiry[:16] }}
+                {% else %}—{% endif %}
+            </td>
+            <td>{{ u.total_checks or 0 }}</td>
+            <td>
+                <form method="POST" action="{{ url_for('users_extend') }}" style="display: inline;">
+                    <input type="hidden" name="user_id" value="{{ u.user_id }}">
+                    <input type="number" name="hours" value="24" min="1" style="width: 80px; padding: 5px;">
+                    <button type="submit" class="btn btn-success" style="padding: 5px 10px; font-size: 12px;">تمديد</button>
+                </form>
+                <form method="POST" action="{{ url_for('users_toggle_block') }}" style="display: inline;">
+                    <input type="hidden" name="user_id" value="{{ u.user_id }}">
+                    <input type="hidden" name="block" value="{{ 0 if u.is_blocked else 1 }}">
+                    <button type="submit" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;">
+                        {{ "رفع الحظر" if u.is_blocked else "حظر" }}
+                    </button>
+                </form>
+            </td>
+        </tr>
         {% endfor %}
-      
-⏰ تمديد الاشتراك
-عدد الساعات24 = يوم | 168 = أسبوع | 720 = شهرإلغاءتمديد
+    </tbody>
+</table>
 {% endblock %}
 """
 
@@ -228,48 +489,74 @@ def users_toggle_block():
 
 CODES_HTML = BASE + """
 {% block content %}
- أكواد التفعيل إنشاء كود
-  إدارة أكواد اشتراك المستخدمين
-| الكود
-|الوصف
-|المدة
-|الاستخدام
-|تاريخ الإنشاء
-|
-| ---|---|---|---|---|
-        {% for c in codes %}
-        
-| {{ c.code }}
-|{{ c.label or '—' }}
-|
-            {% set hrs = c.duration_hours if c.duration_hours else c.duration_days * 24 %}
-            {% if hrs >= 720 %} {{ (hrs // 720) }} شهر 
-            {% elif hrs >= 168 %} {{ (hrs // 168) }} أسبوع 
-            {% elif hrs >= 24 %} {{ (hrs // 24) }} يوم 
-            {% else %} {{ hrs }} ساعة 
-            {% endif %}
-             ({{ hrs }}h)  
-|  
-              {{ c.used_count }}/{{ c.max_uses }}
-              
-|{{ c.created_at[:16] }}
-|         
-|
-| ---|---|---|---|---|---|
-        {% else %}
-        
-| لا توجد أكواد بعد
-|لا توجد أكواد بعد
-|لا توجد أكواد بعد
-|لا توجد أكواد بعد
-|لا توجد أكواد بعد
-|لا توجد أكواد بعد
-|
-| ---|---|---|---|---|---|
-        {% endfor %}
-      
- إنشاء كود جديد
-الوصف / الاسم (اختياري) المدة بالساعات  * 1 ساعة | 24 = يوم | 168 = أسبوع | 720 = شهر عدد مرات الاستخدام الكود (فارغ = توليد تلقائي) إلغاء  إنشاء 
+<h2 style="margin-bottom: 20px;">🎫 أكواد التفعيل</h2>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">➕ إنشاء كود جديد</h3>
+    <form method="POST" action="{{ url_for('codes_create') }}">
+        <div class="form-group">
+            <label>الوصف / الاسم (اختياري)</label>
+            <input type="text" name="label" placeholder="مثال: كود تجريبي">
+        </div>
+        <div class="form-group">
+            <label>المدة بالساعات</label>
+            <input type="number" name="hours" value="24" min="1" required>
+            <small style="color: #666;">* 1 ساعة | 24 = يوم | 168 = أسبوع | 720 = شهر</small>
+        </div>
+        <div class="form-group">
+            <label>عدد مرات الاستخدام</label>
+            <input type="number" name="max_uses" value="1" min="1" required>
+        </div>
+        <div class="form-group">
+            <label>الكود (فارغ = توليد تلقائي)</label>
+            <input type="text" name="custom_code" placeholder="اتركه فارغاً للتوليد التلقائي">
+        </div>
+        <button type="submit" class="btn btn-success">إنشاء الكود</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📋 إدارة الأكواد</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>الكود</th>
+                <th>الوصف</th>
+                <th>المدة</th>
+                <th>الاستخدام</th>
+                <th>تاريخ الإنشاء</th>
+                <th>إجراء</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in codes %}
+            <tr>
+                <td><code>{{ c.code }}</code></td>
+                <td>{{ c.label or '—' }}</td>
+                <td>
+                    {% set hrs = c.duration_hours if c.duration_hours else c.duration_days * 24 %}
+                    {% if hrs >= 720 %}{{ (hrs // 720) }} شهر
+                    {% elif hrs >= 168 %}{{ (hrs // 168) }} أسبوع
+                    {% elif hrs >= 24 %}{{ (hrs // 24) }} يوم
+                    {% else %}{{ hrs }} ساعة{% endif %}
+                </td>
+                <td>{{ c.used_count }}/{{ c.max_uses }}</td>
+                <td>{{ c.created_at[:16] }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('codes_delete') }}" style="display: inline;">
+                        <input type="hidden" name="code_id" value="{{ c.id }}">
+                        <button type="submit" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;">حذف</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" style="text-align: center; color: #999;">لا توجد أكواد بعد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}
 """
 
@@ -278,12 +565,12 @@ CODES_HTML = BASE + """
 def codes():
     return render_template_string(CODES_HTML, active='codes', codes=db.get_all_codes())
 
-@app.route('/codes/create', methods=['POST'])
+@app.route('/codes/create', methods=['POST'])  # ✅ تم الإصلاح
 @login_required
 def codes_create():
     label = request.form.get('label', '').strip()
     hours = int(request.form.get('hours', 24))
-    max_uses = int(request.form.get('max_uses', 1))
+    max_uses = int(request.form.get('max_uses', 1))  # ✅ تم الإصلاح
     custom_code = request.form.get('custom_code', '').strip().upper()
     code = custom_code or ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
     try:
@@ -306,25 +593,82 @@ def codes_delete():
 
 GATEWAYS_HTML = BASE + """
 {% block content %}
-  البوابات  إضافة بوابة
-   إدارة بوابات فحص الكروت 
-  {% for gw in gateways %}
-   ⚡ {{ gw.display_name }} زرار: {{ gw.button_name }} Endpoint:
-{{ gw.api_endpoint[:60] }}{% if gw.api_endpoint|length > 60 %}…{% endif %}
-Method:{{ gw.method }}
-        {% if gw.success_pattern %}Success:
-{{ gw.success_pattern }}
-{% endif %}
-        {% if gw.decline_pattern %}Decline:
-{{ gw.decline_pattern }}
-{% endif %}
-      
-  {% else %}
-  
-لا توجد بوابات بعد. أضف أول بوابة!
-  {% endfor %}
- إضافة بوابة جديدة
-اسم البوابة (داخلي) اسم الزرار (للمستخدم) رابط API (Endpoint) الميثود POST GET Headers (JSON) {} Body Template متغيرات: {card} {month} {year} {cvv} Success Pattern (Regex) Decline Pattern (Regex) Error Pattern (Regex) Timeout (ثانية) إلغاء  إضافة 
+<h2 style="margin-bottom: 20px;">⚡ البوابات</h2>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">➕ إضافة بوابة جديدة</h3>
+    <form method="POST" action="{{ url_for('gateways_add') }}">
+        <div class="form-group">
+            <label>اسم البوابة (داخلي)</label>
+            <input type="text" name="display_name" required>
+        </div>
+        <div class="form-group">
+            <label>اسم الزرار (للمستخدم)</label>
+            <input type="text" name="button_name" required>
+        </div>
+        <div class="form-group">
+            <label>رابط API (Endpoint)</label>
+            <input type="text" name="endpoint" required placeholder="https://api.example.com/charge">
+        </div>
+        <div class="form-group">
+            <label>الميثود</label>
+            <select name="method">
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Headers (JSON)</label>
+            <textarea name="headers" rows="3" placeholder='{"Content-Type": "application/json"}'>{}</textarea>
+        </div>
+        <div class="form-group">
+            <label>Body Template</label>
+            <textarea name="body" rows="3" placeholder="amount=100&card={card}&month={month}&year={year}&cvv={cvv}"></textarea>
+            <small style="color: #666;">متغيرات: {card} {month} {year} {cvv}</small>
+        </div>
+        <div class="form-group">
+            <label>Success Pattern (Regex)</label>
+            <input type="text" name="success" placeholder="succeeded|approved">
+        </div>
+        <div class="form-group">
+            <label>Decline Pattern (Regex)</label>
+            <input type="text" name="decline" placeholder="declined|rejected">
+        </div>
+        <div class="form-group">
+            <label>Error Pattern (Regex)</label>
+            <input type="text" name="error" placeholder="error|failed">
+        </div>
+        <div class="form-group">
+            <label>Timeout (ثانية)</label>
+            <input type="number" name="timeout" value="30" min="5" max="120">
+        </div>
+        <button type="submit" class="btn btn-success">إضافة البوابة</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📋 البوابات النشطة</h3>
+    {% for gw in gateways %}
+    <div style="border: 1px solid #e9ecef; padding: 15px; margin: 10px 0; border-radius: 8px;">
+        <h4>⚡ {{ gw.display_name }}</h4>
+        <p><strong>زرار:</strong> {{ gw.button_name }}</p>
+        <p><strong>Endpoint:</strong> <code>{{ gw.api_endpoint[:60] }}{% if gw.api_endpoint|length > 60 %}…{% endif %}</code></p>
+        <p><strong>Method:</strong> {{ gw.method }}</p>
+        {% if gw.success_pattern %}<p><strong>Success:</strong> <code>{{ gw.success_pattern }}</code></p>{% endif %}
+        {% if gw.decline_pattern %}<p><strong>Decline:</strong> <code>{{ gw.decline_pattern }}</code></p>{% endif %}
+        {% if gw.id > 0 %}
+        <form method="POST" action="{{ url_for('gateways_delete') }}" style="margin-top: 10px;">
+            <input type="hidden" name="gw_id" value="{{ gw.id }}">
+            <button type="submit" class="btn btn-danger" style="padding: 5px 15px; font-size: 12px;">حذف</button>
+        </form>
+        {% else %}
+        <p style="color: #999; font-size: 12px;">🔒 بوابة مدمجة (لا يمكن حذفها)</p>
+        {% endif %}
+    </div>
+    {% else %}
+    <p style="text-align: center; color: #999;">لا توجد بوابات بعد. أضف أول بوابة!</p>
+    {% endfor %}
+</div>
 {% endblock %}
 """
 
@@ -333,7 +677,7 @@ Method:{{ gw.method }}
 def gateways():
     return render_template_string(GATEWAYS_HTML, active='gateways', gateways=db.get_all_gateways())
 
-@app.route('/gateways/add', methods=['POST'])
+@app.route('/gateways/add', methods=['POST'])  # ✅ تم الإصلاح
 @login_required
 def gateways_add():
     try:
@@ -344,15 +688,15 @@ def gateways_add():
             headers = '{}'
         db.add_gateway({
             'display_name': request.form['display_name'],
-            'button_name':  request.form['button_name'],
-            'endpoint':     request.form['endpoint'],
-            'method':       request.form.get('method', 'POST'),
-            'headers':      headers,
-            'body':         request.form.get('body', ''),
-            'success':      request.form.get('success', ''),
-            'decline':      request.form.get('decline', ''),
-            'error':        request.form.get('error', ''),
-            'timeout':      int(request.form.get('timeout', 30)),
+            'button_name': request.form['button_name'],
+            'endpoint': request.form['endpoint'],
+            'method': request.form.get('method', 'POST'),
+            'headers': headers,
+            'body': request.form.get('body', ''),
+            'success': request.form.get('success', ''),
+            'decline': request.form.get('decline', ''),
+            'error': request.form.get('error', ''),
+            'timeout': int(request.form.get('timeout', 30)),
         })
         flash(f'✅ تمت إضافة البوابة: {request.form["display_name"]}', 'success')
     except Exception as e:
@@ -366,53 +710,83 @@ def gateways_delete():
     flash('🗑 تم حذف البوابة', 'info')
     return redirect(url_for('gateways'))
 
-#  ─────────────────────────────────────────
+# ─────────────────────────────────────────
 #  Proxies
 # ─────────────────────────────────────────
 
 PROXIES_HTML = BASE + """
 {% block content %}
-  البروكسيات  إضافة
-      حذف الكل {{ proxies|length }} بروكسي — {{ active_count }} نشط
-| #
-|البروكسي
-|البروتوكول
-|الحالة
-|أخطاء
-|
-| ---|---|---|---|---|
-        {% for p in proxies %}
-        
-| {{ loop.index }}
-|{{ p.proxy_string }}
-|{{ p.protocol }}
-|
-            {% if p.is_active and p.fail_count  < 5 %}
-               ✅ نشط 
+<h2 style="margin-bottom: 20px;">🔌 البروكسيات</h2>
+<p style="margin-bottom: 30px; color: #666;">{{ proxies|length }} بروكسي — {{ active_count }} نشط</p>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">➕ إضافة بروكسي</h3>
+    <form method="POST" action="{{ url_for('proxies_add') }}">
+        <div class="form-group">
+            <label>البروكسي</label>
+            <input type="text" name="proxy" placeholder="host:port أو http://user:pass@host:port" required>
+        </div>
+        <button type="submit" class="btn btn-success">إضافة</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📁 إضافة متعددة</h3>
+    <form method="POST" action="{{ url_for('proxies_bulk') }}">
+        <div class="form-group">
+            <label>البروكسيات (سطر لكل بروكسي)</label>
+            <textarea name="proxies" rows="5" placeholder="host1:port1&#10;host2:port2&#10;http://user:pass@host3:port3"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">إضافة الكل</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3 style="margin-bottom: 20px;">📋 البروكسيات النشطة</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>البروكسي</th>
+                <th>البروتوكول</th>
+                <th>الحالة</th>
+                <th>أخطاء</th>
+                <th>إجراء</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in proxies %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><code>{{ p.proxy_string }}</code></td>
+                <td>{{ p.protocol }}</td>
+                <td>
+                    {% if p.is_active and p.fail_count < 5 %}
+                        <span style="color: green;">✅ نشط</span>
+                    {% else %}
+                        <span style="color: red;">❌ معطّل</span>
+                    {% endif %}
+                </td>
+                <td>{{ p.fail_count }}</td>
+                <td>
+                    <form method="POST" action="{{ url_for('proxies_delete') }}" style="display: inline;">
+                        <input type="hidden" name="proxy_id" value="{{ p.id }}">
+                        <button type="submit" class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;">حذف</button>
+                    </form>
+                </td>
+            </tr>
             {% else %}
-               ❌ معطّل 
-            {% endif %}
-          
-|{{ p.fail_count }}
-|         
-|
-| ---|---|---|---|---|---|
-        {% else %}
-        
-| لا توجد بروكسيات بعد
-|لا توجد بروكسيات بعد
-|لا توجد بروكسيات بعد
-|لا توجد بروكسيات بعد
-|لا توجد بروكسيات بعد
-|لا توجد بروكسيات بعد
-|
-| ---|---|---|---|---|---|
-        {% endfor %}
-      
- إضافة بروكسيات
-بروكسي واحد
-إضافة متعددة
-البروكسيإضافةالبروكسيات (سطر لكل بروكسي)إضافة الكل
+            <tr>
+                <td colspan="6" style="text-align: center; color: #999;">لا توجد بروكسيات بعد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <form method="POST" action="{{ url_for('proxies_clear') }}" style="margin-top: 20px;">
+        <button type="submit" class="btn btn-danger">🗑 حذف الكل</button>
+    </form>
+</div>
 {% endblock %}
 """
 
@@ -463,40 +837,43 @@ def proxies_clear():
 
 LOGS_HTML = BASE + """
 {% block content %}
- سجل الفحوصاتآخر 100 عملية فحص
-| الوقت
-|المستخدم
-|الكارت
-|البوابة
-|النتيجة
-|
-| ---|---|---|---|---|
-        {% for l in logs %}
-        
-| {{ l.created_at[:16] }}
-|{{ l.user_id }}
-|****{{ l.card_last4 }}
-|{{ l.gateway_name }}
-|
-            {% if 'APPROVED' in l.result_status %}
-               ✅ {{ l.result_status }} 
+<h2 style="margin-bottom: 20px;">📋 سجل الفحوصات</h2>
+<p style="margin-bottom: 30px; color: #666;">آخر 100 عملية فحص</p>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>الوقت</th>
+                <th>المستخدم</th>
+                <th>الكارت</th>
+                <th>البوابة</th>
+                <th>النتيجة</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for l in logs %}
+            <tr>
+                <td>{{ l.created_at[:16] }}</td>
+                <td><code>{{ l.user_id }}</code></td>
+                <td><code>****{{ l.card_last4 }}</code></td>
+                <td>{{ l.gateway_name }}</td>
+                <td>
+                    {% if 'APPROVED' in l.result_status %}
+                        <span style="color: green;">✅ {{ l.result_status }}</span>
+                    {% else %}
+                        <span style="color: red;">❌ {{ l.result_status }}</span>
+                    {% endif %}
+                </td>
+            </tr>
             {% else %}
-               ❌ {{ l.result_status }} 
-            {% endif %}
-          
-|
-| ---|---|---|---|---|
-        {% else %}
-        
-| لا توجد سجلات
-|لا توجد سجلات
-|لا توجد سجلات
-|لا توجد سجلات
-|لا توجد سجلات
-|
-| ---|---|---|---|---|
-        {% endfor %}
-      
+            <tr>
+                <td colspan="5" style="text-align: center; color: #999;">لا توجد سجلات</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}
 """
 
