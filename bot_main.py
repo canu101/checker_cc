@@ -1158,53 +1158,45 @@ async def _show_gateways(edit_fn, uid: int):
 
 async def _show_proxies(edit_fn, uid: int):
     proxies = db.get_active_proxies()
-    text = text.strip()
-    
-    if not text:
-        return None
-    
-    # استبدال كل الفواصل المحتملة بـ |
-    normalized = re.sub(r'[|\s/\-:_,;]+', '|', text)
-    parts = [p.strip() for p in normalized.split('|') if p.strip()]
-    
-    if len(parts) < 4:
-        return None
-    
-    number = parts[0].replace(' ', '')
-    month = parts[1]
-    year = parts[2]
-    cvv = parts[3]
-    
-    # التحقق من الصحة
-    if not number.isdigit() or not (13 <= len(number) <= 19):
-        return None
-    
-    try:
-        month_int = int(month)
-        if not (1 <= month_int <= 12):
-            return None
-        month = str(month_int).zfill(2)
-    except:
-        return None
-    
-    if not year.isdigit() or not (2 <= len(year) <= 4):
-        return None
-    
-    year_int = int(year)
-    if year_int < 100:
-        year = str(2000 + year_int)
-    else:
-        year = str(year_int)
-    
-    if not cvv.isdigit() or not (3 <= len(cvv) <= 4):
-        return None
-    
-    return {
-        'number': number,
-        'month': month,
-        'year': year,
-        'cvv': cvv
-    }
+    count = len(proxies)
+    rows = [
+        [_btn("➕  بروكسي واحد",    callback_data="admin_proxy_add", style="success"),
+         _btn("📁  رفع ملف (.txt)", callback_data="admin_proxy_file", style="primary")],
+    ]
+    for p in proxies[:10]:
+        label = f"{ '✅' if p['fail_count'] < 3 else '️' } {p['proxy_string'][:35]}"
+        rows.append([_btn(label, callback_data=f"admin_delproxy|{p['id']}")])
+    if count > 10:
+        rows.append([_btn(f"… و{count-10} أخرى (من لوحة الويب)", callback_data="admin_proxies", style="primary")])
+    rows.append([_btn("🗑  حذف الكل", callback_data="admin_proxy_clear", style="danger"),
+                 _btn("🔙 رجوع",       callback_data="admin_panel", style="danger")])
+    await edit_fn(
+        f"🔌 *البروكسيات*\n\n✅ نشط: `{count}`\n_(اضغط للحذف)_",
+        InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+
+
+async def _show_logs(edit_fn, uid: int, page=0):
+    per_page = 10
+    logs = db.get_recent_logs(100)
+    total_pages = (len(logs) + per_page - 1) // per_page
+    page = min(page, total_pages - 1) if total_pages > 0 else 0
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    page_logs = logs[start_idx:end_idx]
+
+    msg = f" *سجل الفحوصات*\n\nالصفحة `{page + 1}/{total_pages or 1}`\n\n"
+    for l in page_logs:
+        icon = "✅" if "APPROVED" in l.get('result_status', '') else "❌"
+        msg += f"{icon} `····{l['card_last4']}` — {l['gateway_name']}\n"
+        msg += f"   👤 `{l['user_id']}` | 🕐 {l['created_at'][:16]}\n\n"
+
+    rows = []
+    if total_pages > 1:
+        nav_row = []
+        if page > 0:
+            nav_row.append(_btn("◀️", callback_data=f"admin_logs_page|{page-1}", style="primary"))
+        nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_logs", style="primary"))
         if page < total_pages - 1:
             nav_row.append(_btn("▶️", callback_data=f"admin_logs_page|{page+1}", style="primary"))
         rows.append(nav_row)
