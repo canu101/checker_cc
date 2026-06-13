@@ -8,13 +8,13 @@ import threading
 import os
 from datetime import datetime
 from typing import Optional
-from pydantic import ConfigDict
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup,
     InlineKeyboardButton, InputMediaPhoto, FSInputFile
 )
+from aiogram.enums import ButtonStyle
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -172,19 +172,14 @@ router = Router()
 
 
 # ══════════════════════════════════════════════════════
-#  StyledButton — زر ملون (style field)
+#  _btn — زر ملون (يدعم style رسمياً عبر aiogram.enums.ButtonStyle)
 # ══════════════════════════════════════════════════════
-
-class StyledButton(InlineKeyboardButton):
-    model_config = ConfigDict(extra='allow', populate_by_name=True)
-    style: Optional[str] = None  # primary, success, danger, secondary
-
 
 def _btn(text: str, *,
          callback_data: Optional[str] = None,
          url: Optional[str] = None,
          style: Optional[str] = None,
-         **kw) -> StyledButton:
+         **kw) -> InlineKeyboardButton:
     """إنشاء زر ملون"""
     kwargs: dict = {'text': text}
     if callback_data is not None:
@@ -192,9 +187,15 @@ def _btn(text: str, *,
     if url is not None:
         kwargs['url'] = url
     if style is not None:
-        kwargs['style'] = style
+        style_map = {
+            'primary': ButtonStyle.PRIMARY,
+            'success': ButtonStyle.SUCCESS,
+            'danger': ButtonStyle.DANGER,
+            'secondary': ButtonStyle.SECONDARY,
+        }
+        kwargs['style'] = style_map.get(style.lower(), ButtonStyle.PRIMARY)
     kwargs.update(kw)
-    return StyledButton(**kwargs)
+    return InlineKeyboardButton(**kwargs)
 
 
 # ═════════════════════════════════════════════════════
