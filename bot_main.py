@@ -102,7 +102,7 @@ BUILT_IN_GATEWAYS = [
     {
         'id': -5,
         'display_name': 'Braintree AUTH',
-        'button_name': '🌲 Braintree',
+        'button_name': ' Braintree',
         'api_endpoint': 'braintree_builtin',
         'method': 'POST',
         'headers_json': '{}',
@@ -130,7 +130,7 @@ BUILT_IN_GATEWAYS = [
     {
         'id': -7,
         'display_name': 'Stripe WooCommerce OTP/3D',
-        'button_name': '🔐 Stripe OTP',
+        'button_name': ' Stripe OTP',
         'api_endpoint': 'woocommerce_stripe_otp',
         'method': 'POST',
         'headers_json': '{}',
@@ -197,9 +197,9 @@ def _btn(text: str, *,
     return StyledButton(**kwargs)
 
 
-# ══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════
 #  HELPERS
-# ══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════
 
 def is_admin(uid: int) -> bool:
     return uid == ADMIN_ID
@@ -221,17 +221,97 @@ def s(uid: int, key: str, **kw):
 
 
 def parse_card(text: str):
-    for pat in [
-        r'(\d{13,19})[|\s/](\d{1,2})[|\s/](\d{4})[|\s/](\d{3,4})',
-        r'(\d{13,19})[|\s/](\d{1,2})[|\s/](\d{2})[|\s/](\d{3,4})',
-    ]:
-        m = re.match(pat, text.strip())
+    """
+    يقبل كل صيغ الكروت:
+    4111111111111111|12|2026|123
+    4111111111111111|12/26|123
+    4111111111111111|12/2026|123
+    4111111111111111 12 26 123
+    4111 1111 1111 1111|12|26|123
+    378282246310005|12|26|1234 (Amex)
+    """
+    text = text.strip()
+    
+    patterns = [
+        r'(\d{13,19})[|\s/\-:](\d{1,2})[|\s/\-:](\d{2,4})[|\s/\-:](\d{3,4})',
+        r'(\d{13,19})\s+(\d{1,2})\s*[/\-]\s*(\d{2,4})\s+(\d{3,4})',
+        r'(\d{13,19})[|\s/\-:](\d{1,2})\s*[/\-]\s*(\d{2,4})[|\s/\-:](\d{3,4})',
+        r'(\d{15})[|\s/\-:](\d{1,2})[|\s/\-:](\d{2,4})[|\s/\-:](\d{4})',
+    ]
+    
+    for pat in patterns:
+        m = re.search(pat, text)
         if m:
-            yr = m.group(3)
-            if len(yr) == 2:
-                yr = '20' + yr
-            return {'number': m.group(1), 'month': m.group(2).zfill(2), 'year': yr, 'cvv': m.group(4)}
+            number = m.group(1).replace(' ', '')
+            month = m.group(2).zfill(2)
+            year = m.group(3)
+            cvv = m.group(4)
+            
+            if len(year) == 2:
+                year = '20' + year
+            elif len(year) == 3:
+                year = '2' + year
+            
+            if not (1 <= int(month) <= 12):
+                continue
+            
+            if not (13 <= len(number) <= 19):
+                continue
+            
+            if not (3 <= len(cvv) <= 4):
+                continue
+            
+            return {
+                'number': number,
+                'month': month,
+                'year': year,
+                'cvv': cvv
+            }
+    
     return None
+
+
+def validate_card_type(number: str) -> dict:
+    """يتعرف على نوع البطاقة"""
+    number = number.replace(' ', '')
+    
+    if number.startswith('4'):
+        return {'type': 'Visa', 'length': [13, 16, 19], 'cvv': 3}
+    
+    if len(number) >= 2:
+        prefix2 = int(number[:2])
+        if 51 <= prefix2 <= 55:
+            return {'type': 'Mastercard', 'length': [16], 'cvv': 3}
+        prefix4 = int(number[:4])
+        if 2221 <= prefix4 <= 2720:
+            return {'type': 'Mastercard', 'length': [16], 'cvv': 3}
+    
+    if number.startswith('34') or number.startswith('37'):
+        return {'type': 'Amex', 'length': [15], 'cvv': 4}
+    
+    if number.startswith('6011') or number.startswith('65'):
+        return {'type': 'Discover', 'length': [16, 19], 'cvv': 3}
+    if len(number) >= 3:
+        prefix3 = int(number[:3])
+        if 644 <= prefix3 <= 649:
+            return {'type': 'Discover', 'length': [16, 19], 'cvv': 3}
+    
+    if len(number) >= 4:
+        prefix4 = int(number[:4])
+        if 3528 <= prefix4 <= 3589:
+            return {'type': 'JCB', 'length': [16, 17, 18, 19], 'cvv': 3}
+    
+    if number.startswith('62'):
+        return {'type': 'UnionPay', 'length': [16, 17, 18, 19], 'cvv': 3}
+    
+    if number.startswith('36') or number.startswith('38'):
+        return {'type': 'Diners Club', 'length': [14, 15, 16, 19], 'cvv': 3}
+    if len(number) >= 3:
+        prefix3 = int(number[:3])
+        if 300 <= prefix3 <= 305:
+            return {'type': 'Diners Club', 'length': [14, 15, 16, 19], 'cvv': 3}
+    
+    return {'type': 'Unknown', 'length': [13, 14, 15, 16, 17, 18, 19], 'cvv': 3}
 
 
 def progress_bar(cur, tot, w=14):
@@ -259,7 +339,7 @@ async def get_banner(bot: Bot) -> Optional[str]:
         msg = await bot.send_photo(
             chat_id=ADMIN_ID,
             photo=FSInputFile(BANNER_PATH),
-            caption="🖼 Banner cached"
+            caption=" Banner cached"
         )
         _banner_id = msg.photo[-1].file_id
         db.set_setting('banner_file_id', _banner_id)
@@ -284,7 +364,6 @@ async def bot_send(bot: Bot, chat_id: int, caption: str, kb, fid=None):
             )
         except Exception as e:
             logger.warning(f"فشل إرسال البانر (سيتم الإرسال كنص): {e}")
-    # في حال عدم وجود fid أو فشل الصورة نرسل رسالة نصية عادية
     return await bot.send_message(
         chat_id=chat_id, text=caption,
         reply_markup=kb, parse_mode="Markdown"
@@ -345,21 +424,21 @@ def kb_main(uid: int, is_sub: bool, is_adm: bool) -> InlineKeyboardMarkup:
             [_btn("📂 رفع كروت", callback_data="menu_upload", style="primary"),
              _btn("💳 فحص كارت", callback_data="menu_check", style="success")],
             [_btn("👤 حسابي", callback_data="menu_account", style="primary"),
-             _btn("📊 السجل", callback_data="menu_history", style="primary")],
+             _btn(" السجل", callback_data="menu_history", style="primary")],
             [_btn("🎫 كود تفعيل", callback_data="menu_redeem", style="success")],
-            [_btn("⚙️ الإعدادات", callback_data="menu_settings", style="primary"),
+            [_btn("️ الإعدادات", callback_data="menu_settings", style="primary"),
              _btn("📞 الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
         ])
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn("💎 اشتراك", url=f"https://t.me/{SUPPORT_USERNAME}", style="success")],
         [_btn("🎫 كود تفعيل", callback_data="menu_redeem", style="primary")],
-        [_btn("📞 الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
+        [_btn(" الدعم", url=f"https://t.me/{SUPPORT_USERNAME}")],
     ])
 
 
 def kb_admin(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("📊 الإحصائيات", callback_data="admin_stats", style="primary"),
+        [_btn(" الإحصائيات", callback_data="admin_stats", style="primary"),
          _btn("👥 المستخدمين", callback_data="admin_users", style="primary")],
         [_btn("🎫 أكواد التفعيل", callback_data="admin_codes", style="success"),
          _btn("⚡ البوابات", callback_data="admin_gateways", style="primary")],
@@ -431,7 +510,7 @@ async def cmd_addgateway(message: Message, state: FSMContext):
     await state.update_data(gw_step='name', gw_data={})
     fid = await get_banner(message.bot)
     cancel = InlineKeyboardMarkup(inline_keyboard=[
-        [_btn("❌ إلغاء", callback_data="main_menu", style="danger")]
+        [_btn(" إلغاء", callback_data="main_menu", style="danger")]
     ])
     await bot_send(message.bot, uid,
                    "⚡ *إضافة بوابة جديدة*\nالخطوة 1/7\n\n📌 أرسل *اسم البوابة* (داخلي):",
@@ -440,7 +519,7 @@ async def cmd_addgateway(message: Message, state: FSMContext):
 
 # ══════════════════════════════════════════════════════
 #  Document handler
-# ══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════
 
 @router.message(F.document)
 async def on_document(message: Message, state: FSMContext):
@@ -532,7 +611,6 @@ async def on_message(message: Message, state: FSMContext):
                            "✅ *تم الدخول!*\nأهلاً بك في لوحة الأدمن 👑",
                            kb_admin(uid), fid)
         else:
-            # رسالة الخطأ للباسورد الخاطئ
             await message.answer(s(uid, "wrong_pass"))
         return
 
@@ -573,7 +651,7 @@ async def on_message(message: Message, state: FSMContext):
             await message.answer("⚠️ البروكسي موجود مسبقاً.")
         return
 
-    # ── Redeem code ────────────────────────
+    # ─ Redeem code ────────────────────────
     if data.get('awaiting_redeem'):
         await state.update_data(awaiting_redeem=False)
         code_str = text.upper()
@@ -661,7 +739,7 @@ async def _handle_code_wizard(message: Message, state: FSMContext, text: str, st
             return
         await state.update_data(admin_code_hours=hours, admin_code_step='uses')
         await bot_send(message.bot, uid,
-                       f"🎫 *مدة الكود:* `{hours}` ساعة\n\nالخطوة 2/2\n👥 كم مرة استخدام؟",
+                       f" *مدة الكود:* `{hours}` ساعة\n\nالخطوة 2/2\n👥 كم مرة استخدام؟",
                        cancel, fid)
         return
 
@@ -797,7 +875,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         chk = u.get('total_checks', 0) if u else 0
         st = "👑 أدمن" if is_adm else ("✅ نشط" if is_sub else "❌ منتهي")
         await edit(
-            f"┌──────────────────────┐\n│      👤  حسابي       │\n└──────────────────────┘\n\n"
+            f"┌──────────────────────┐\n│      👤  حسابي       │\n──────────────────────┘\n\n"
             f"🆔 `{uid}`\n📌 {st}\n📅 `{exp}`\n🔢 `{chk}` فحص",
             kb_main(uid, is_sub, is_adm)
         )
@@ -838,7 +916,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         await edit(s(uid, "menu_title", name=name), kb_main(uid, is_sub, is_adm))
         return
 
-    # ── Gateway select (single) ────────────
+    # ── Gateway select (single) ───────────
     if data.startswith("gw|"):
         card = data_state.get('last_card')
         if not card:
@@ -847,7 +925,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         await _run_single(query, state, int(data.split("|")[1]), card, fid)
         return
 
-    # ── Gateway select (bulk) ──────────────
+    # ── Gateway select (bulk) ─────────────
     if data.startswith("bulk_gw|"):
         gw_id = int(data.split("|")[1])
         await state.update_data(bulk_gw=gw_id)
@@ -880,7 +958,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
         await query.answer("⏹ جاري الإيقاف…")
         return
 
-    # ── Admin guard ────────────────────────
+    # ── Admin guard ───────────────────────
     if data.startswith("admin_") and not is_adm_v:
         await query.answer("⛔ ممنوع!", show_alert=True)
         return
@@ -924,11 +1002,11 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
              _btn("✏️ مخصص",    callback_data=f"admin_ext_custom|{tid}", style="primary")],
             [_btn("🚫 حظر" if not blk else "✅ رفع الحظر",
                   callback_data=f"admin_blk|{tid}|{1-blk}", style="danger" if not blk else "success")],
-            [_btn("🔙 رجوع", callback_data="admin_users", style="danger")],
+            [_btn(" رجوع", callback_data="admin_users", style="danger")],
         ])
-        st = "🔴 محظور" if blk else ("✅ نشط" if u.get('subscription_expiry') else "⚫ بلا اشتراك")
+        st = " محظور" if blk else ("✅ نشط" if u.get('subscription_expiry') else "⚫ بلا اشتراك")
         await edit(
-            f"👤 *{u.get('first_name','---')}*\n🆔 `{tid}`\n📌 {st}\n🔢 `{u.get('total_checks',0)}` فحص",
+            f"👤 *{u.get('first_name','---')}*\n🆔 `{tid}`\n📌 {st}\n `{u.get('total_checks',0)}` فحص",
             kb_
         )
         return
@@ -984,7 +1062,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
     if data.startswith("admin_delgw|"):
         gid = int(data.split("|")[1])
         if gid < 0:
-            await query.answer("⛔ البوابات المدمجة لا يمكن حذفها من هنا. عدّل الكود.", show_alert=True)
+            await query.answer(" البوابات المدمجة لا يمكن حذفها من هنا. عدّل الكود.", show_alert=True)
             return
         db.delete_gateway(gid)
         await query.answer("🗑 حُذفت!")
@@ -999,7 +1077,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
     if data == "admin_proxy_add":
         await state.update_data(awaiting_proxy=True)
         await edit(
-            "🔌 *إضافة بروكسي*\n\nأرسل البروكسي:\n`host:port`\n`http://user:pass@host:port`\n`socks5://host:port`",
+            " *إضافة بروكسي*\n\nأرسل البروكسي:\n`host:port`\n`http://user:pass@host:port`\n`socks5://host:port`",
             kb_back(uid, "admin_proxies")
         )
         return
@@ -1042,7 +1120,7 @@ async def on_callback(query: CallbackQuery, state: FSMContext):
     if data.startswith("admin_set_setting|"):
         setting_key = data.split("|")[1]
         await state.update_data(awaiting_setting_value=setting_key)
-        await edit(f"⚙️ *تعديل الإعداد*\n\n📌 `{setting_key}`\n\nأرسل القيمة الجديدة:", kb_back(uid, "admin_settings"))
+        await edit(f"⚙️ *تعديل الإعداد*\n\n `{setting_key}`\n\nأرسل القيمة الجديدة:", kb_back(uid, "admin_settings"))
         return
 
 
@@ -1068,8 +1146,7 @@ async def _show_gateways(edit_fn, uid: int):
     rows = [[_btn("➕  إضافة بوابة", callback_data="admin_gw_hint", style="success")]]
     for gw in gateways:
         if gw.get('id', 0) < 0:
-            # Built-in gateway — read only
-            rows.append([_btn(f"🔒 {gw['button_name']} — {gw['display_name']} (built-in)",
+            rows.append([_btn(f" {gw['button_name']} — {gw['display_name']} (built-in)",
                               callback_data="admin_gw_hint")])
         else:
             rows.append([_btn(f"⚡ {gw['button_name']} — {gw['display_name']}",
@@ -1089,7 +1166,7 @@ async def _show_proxies(edit_fn, uid: int):
          _btn("📁  رفع ملف (.txt)", callback_data="admin_proxy_file", style="primary")],
     ]
     for p in proxies[:10]:
-        label = f"{'✅' if p['fail_count'] < 3 else '⚠️'} {p['proxy_string'][:35]}"
+        label = f"{'✅' if p['fail_count'] < 3 else '️'} {p['proxy_string'][:35]}"
         rows.append([_btn(label, callback_data=f"admin_delproxy|{p['id']}")])
     if count > 10:
         rows.append([_btn(f"… و{count-10} أخرى (من لوحة الويب)", callback_data="admin_proxies", style="primary")])
@@ -1110,7 +1187,7 @@ async def _show_logs(edit_fn, uid: int, page=0):
     end_idx = start_idx + per_page
     page_logs = logs[start_idx:end_idx]
 
-    msg = f"📋 *سجل الفحوصات*\n\nالصفحة `{page + 1}/{total_pages or 1}`\n\n"
+    msg = f" *سجل الفحوصات*\n\nالصفحة `{page + 1}/{total_pages or 1}`\n\n"
     for l in page_logs:
         icon = "✅" if "APPROVED" in l.get('result_status', '') else "❌"
         msg += f"{icon} `····{l['card_last4']}` — {l['gateway_name']}\n"
@@ -1120,7 +1197,7 @@ async def _show_logs(edit_fn, uid: int, page=0):
     if total_pages > 1:
         nav_row = []
         if page > 0:
-            nav_row.append(_btn("◀️", callback_data=f"admin_logs_page|{page-1}", style="primary"))
+            nav_row.append(_btn("️", callback_data=f"admin_logs_page|{page-1}", style="primary"))
         nav_row.append(_btn(f"{page+1}/{total_pages}", callback_data="admin_logs", style="primary"))
         if page < total_pages - 1:
             nav_row.append(_btn("▶️", callback_data=f"admin_logs_page|{page+1}", style="primary"))
@@ -1168,7 +1245,7 @@ async def _show_users(edit_fn, uid: int, page=0):
 
     rows = []
     for u in page_users:
-        st = "🟢" if u.get('subscription_expiry') and u['subscription_expiry'] > datetime.now().isoformat() else "🔴"
+        st = "" if u.get('subscription_expiry') and u['subscription_expiry'] > datetime.now().isoformat() else "🔴"
         name = u['first_name'] or f"User {u['user_id']}"
         rows.append([_btn(f"{st} {name} ({u['user_id']})", callback_data=f"admin_user|{u['user_id']}")])
 
@@ -1201,7 +1278,6 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
         user_active_checks[uid] = current + 1
 
     try:
-        # إظهار رسالة "جاري الفحص..." مع زر غير تفاعلي
         temp_kb = InlineKeyboardMarkup(inline_keyboard=[
             [_btn("⏳ جاري الفحص...", callback_data="noop")]
         ])
@@ -1238,7 +1314,7 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
             
             # ✅ إرسال بدون بانر
             msg = (
-                f"╔══════════════════════╗\n"
+                f"══════════════════════╗\n"
                 f"║  {status_icon}  {status_text} {status_icon}    ║\n"
                 f"╚══════════════════════╝\n\n"
                 f"💳 `{card['number']}|{card['month']}|{card['year']}|{card['cvv']}`\n"
@@ -1248,7 +1324,7 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
                 f"💎 `{bi['scheme']} — {bi['type']}`\n"
                 f"🌍 `{bi['country']} {bi['flag']}`\n"
                 f"━━━━━━━━━━━━━━━\n"
-                f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`\n"
+                f"⚡ `{gw_name}` |  `{result.get('elapsed','N/A')}`\n"
                 f"🔖 {BOT_SIGNATURE}"
             )
             
@@ -1266,7 +1342,7 @@ async def _run_single(query: CallbackQuery, state: FSMContext, gw_id: int, card:
             msg = (
                 "╔══════════════════════╗\n║    ❌  DECLINED ❌    ║\n╚══════════════════════╝\n\n"
                 f"💳 `····{card['number'][-4:]}`\n📌 `{result.get('reason','Unknown')}`\n\n"
-                f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`"
+                f" `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`"
             )
             await bot_edit(query, msg, InlineKeyboardMarkup(inline_keyboard=[
                 [_btn(s(uid, "try_again"), callback_data="menu_check", style="primary"),
@@ -1397,10 +1473,9 @@ async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
                 except Exception as e:
                     logger.error(f"Bulk send approved: {e}")
             elif filter_mode == 'all':
-                # show declined cards only in all mode
                 msg = (
                     f"❌ *DECLINED* | `····{card['number'][-4:]}`\n"
-                    f"📌 `{result.get('reason','Declined')}`\n"
+                    f" `{result.get('reason','Declined')}`\n"
                     f"⚡ `{gw_name}` | ⏱ `{result.get('elapsed','N/A')}`"
                 )
                 try:
@@ -1413,7 +1488,7 @@ async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
                 try:
                     status = '🛑 جاري الإيقاف...' if state_data.get('bulk_cancel') else '⏳ يرجى الانتظار...'
                     cap = (f"⚡ *جاري الفحص...*\n\n`{progress_bar(i,total)}`\n"
-                           f"📊 `{i}/{total}`  ✅`{len(approved_list)}`  ⚠️`{errors}`\n\n{status}")
+                           f"📊 `{i}/{total}`  ✅`{len(approved_list)}`  ️`{errors}`\n\n{status}")
                     if prog_msg.photo:
                         await prog_msg.edit_caption(caption=cap, reply_markup=stop_kb, parse_mode="Markdown")
                     else:
@@ -1467,7 +1542,7 @@ async def _run_bulk(query: CallbackQuery, state: FSMContext, fid=None):
         pass
 
 
-# ══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════
 #  Web panel & startup
 # ══════════════════════════════════════════════════════
 
@@ -1509,7 +1584,6 @@ async def error_handler(event):
 
     if update and hasattr(update, 'message') and update.message:
         try:
-            # ماتبعتش الرسالة دي إلا في الأخطاء الحقيقية
             if "delete" not in str(exception).lower():
                 await update.message.answer("⚠️ حدث خطأ في الاتصال. يرجى المحاولة مرة أخرى.")
         except Exception:
