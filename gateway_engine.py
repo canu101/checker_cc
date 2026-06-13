@@ -95,9 +95,13 @@ class GatewayEngine:
         # ── JSON parsing fallback ──
         try:
             data = json.loads(raw_text)
+            status = str(data.get('status', '')).lower()
+            message = data.get('message') or data.get('reason') or data.get('error', {}).get('message') if isinstance(data.get('error'), dict) else None
+            text_lower = (message or raw_text).lower()
+
             if 'error' in data:
                 err = data['error']
-                code = err.get('decline_code', '')
+                code = err.get('decline_code', '') if isinstance(err, dict) else ''
                 if code == 'insufficient_funds':
                     result.update({
                         'category': 'approved_insufficient',
@@ -108,29 +112,42 @@ class GatewayEngine:
                     result.update({
                         'category': 'declined',
                         'status_text': 'DECLINED',
-                        'reason': err.get('message', 'Declined')
+                        'reason': err.get('message', 'Declined') if isinstance(err, dict) else str(err)
                     })
-            elif data.get('status') == 'succeeded':
+            elif status in ('approved', 'success', 'succeeded', 'paid', 'authorized', 'captured'):
                 amt = data.get('amount', 0)
                 curr = data.get('currency', 'usd').upper()
+                if 'insufficient' in text_lower or 'funds' in text_lower:
+                    result.update({
+                        'category': 'approved_insufficient',
+                        'status_text': 'APPROVED',
+                        'reason': message or 'Insufficient Funds'
+                    })
+                else:
+                    result.update({
+                        'category': 'approved_charged',
+                        'status_text': 'APPROVED',
+                        'reason': message or 'Payment Successful',
+                        'amount': f"{amt/100:.2f} {curr}" if isinstance(amt, (int, float)) else None
+                    })
+            elif status in ('declined', 'failed', 'failure', 'error', 'rejected', 'reject'):
                 result.update({
-                    'category': 'approved_charged',
-                    'status_text': 'APPROVED',
-                    'reason': 'Payment Successful',
-                    'amount': f"{amt/100:.2f} {curr}"
+                    'category': 'declined',
+                    'status_text': 'DECLINED',
+                    'reason': message or 'Declined'
                 })
-            elif data.get('status') == 'requires_action':
+            elif status == 'requires_action':
                 result.update({
                     'category': 'auth_required',
                     'status_text': 'APPROVED',
-                    'reason': '3D Secure / OTP Required',
+                    'reason': message or '3D Secure / OTP Required',
                     'requires_3ds': True
                 })
-            elif data.get('status') == 'requires_capture':
+            elif status == 'requires_capture':
                 result.update({
                     'category': 'approved_auth_only',
                     'status_text': 'APPROVED',
-                    'reason': 'Authorized (Not Captured)'
+                    'reason': message or 'Authorized (Not Captured)'
                 })
         except Exception:
             text_lower = raw_text.lower()
